@@ -1,0 +1,432 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#0d1220">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<title>Light Controls</title>
+<link rel="manifest" href="manifest.json">
+<link rel="icon" type="image/png" href="logo.png">
+<link rel="apple-touch-icon" href="icon-180.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,600;12..96,800&family=Figtree:wght@400;500;600&family=JetBrains+Mono:wght@400&display=swap">
+<style>
+/* Layout: one-column phone controller. A roofline of bulbs on top shows what the lights are doing; control cards stack below. */
+:root{
+  --night:#0d1220; --dusk:#161d31; --eave:#222b45; --line:#2f3a5c;
+  --text:#eef1f8; --muted:#97a1bd;
+  --glow:#ffb547; --glow-ink:#241500;
+  --ok:#5fd39a; --warn:#ff7a6b;
+  --f-display:"Bricolage Grotesque",ui-sans-serif,system-ui,sans-serif;
+  --f-body:"Figtree",ui-sans-serif,system-ui,sans-serif;
+  --f-mono:"JetBrains Mono",ui-monospace,Menlo,monospace;
+  --r:14px;
+  color-scheme:dark;
+}
+*{box-sizing:border-box}
+html,body{margin:0}
+body{background:var(--night);color:var(--text);font:15px/1.45 var(--f-body);
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));
+  padding-top:env(safe-area-inset-top,0px);padding-bottom:calc(24px + env(safe-area-inset-bottom,0px))}
+.wrap{max-width:520px;margin:0 auto;display:flex;flex-direction:column;gap:14px;padding-block:14px}
+header{display:flex;align-items:center;justify-content:space-between;gap:12px}
+.brand{display:flex;align-items:center;gap:10px}
+.brand img{width:56px;height:56px;border-radius:14px;box-shadow:0 0 18px -4px rgba(255,181,71,.55)}
+h1{font:800 1.45rem/1.1 var(--f-display);letter-spacing:-.01em;margin:0}
+.status{display:flex;align-items:center;gap:8px;font-size:.85rem;color:var(--muted)}
+.dot{width:9px;height:9px;border-radius:50%;background:var(--muted)}
+.status.on .dot{background:var(--ok);box-shadow:0 0 8px var(--ok)}
+.status.busy .dot{background:var(--glow)}
+
+/* Roofline hero */
+.roof{position:relative;padding:18px 10px 22px;border-radius:var(--r);
+  background:linear-gradient(180deg,#0a0f1c 0%,var(--dusk) 100%);border:1px solid var(--line);overflow:hidden}
+.roof svg{display:block;width:100%;height:auto}
+.bulbs{display:grid;gap:4px;margin-top:-6px;padding-inline:4px}
+.bulb{aspect-ratio:1;border-radius:50%;background:#333;transition:background .3s,box-shadow .3s,opacity .3s}
+.roof.off .bulb{background:#2a2f40!important;box-shadow:none!important}
+.roof-meta{display:flex;justify-content:space-between;margin-top:12px;font-size:.8rem;color:var(--muted)}
+
+.card{background:var(--dusk);border:1px solid var(--line);border-radius:var(--r);padding:14px;display:flex;flex-direction:column;gap:12px}
+.card h2{font:600 .78rem/1 var(--f-body);text-transform:uppercase;letter-spacing:.09em;color:var(--muted);margin:0;display:flex;justify-content:space-between;align-items:center}
+.row{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+
+button{font:600 .95rem var(--f-body);color:var(--text);background:var(--eave);border:1px solid var(--line);border-radius:12px;padding:12px 14px;cursor:pointer;touch-action:manipulation}
+button:focus-visible,input:focus-visible,select:focus-visible{outline:2px solid var(--glow);outline-offset:2px}
+button:disabled{opacity:.45;cursor:not-allowed}
+.primary{background:var(--glow);color:var(--glow-ink);border-color:var(--glow)}
+.connect{flex:1}
+.power{width:100%;display:flex;align-items:center;justify-content:center;gap:10px;font:800 1.15rem var(--f-display);padding:16px}
+.power.is-on{background:var(--glow);color:var(--glow-ink);border-color:var(--glow);box-shadow:0 0 24px -6px var(--glow)}
+.power svg{width:22px;height:22px}
+
+input[type=range]{width:100%;accent-color:var(--glow);height:28px}
+.slider{display:flex;align-items:center;gap:12px}
+.slider output{font:500 .9rem var(--f-mono);min-width:3.2em;text-align:right;font-variant-numeric:tabular-nums}
+
+.swatches{display:grid;grid-template-columns:repeat(6,1fr);gap:8px}
+.sw{aspect-ratio:1;border-radius:50%;border:2px solid transparent;padding:0}
+.sw.sel{border-color:var(--text)}
+.custom{position:relative;overflow:hidden;background:conic-gradient(red,yellow,lime,cyan,blue,magenta,red)}
+.custom input{position:absolute;inset:0;opacity:0;width:100%;height:100%;cursor:pointer}
+
+.patterns{display:grid;grid-template-columns:repeat(auto-fill,minmax(140px,1fr));gap:8px}
+.pat{display:flex;flex-direction:column;gap:8px;text-align:left;padding:10px}
+.pat .strip{display:flex;height:10px;border-radius:5px;overflow:hidden}
+.pat .strip i{flex:1}
+.pat.sel{border-color:var(--glow)}
+.pat span{font-size:.88rem}
+
+.seg{display:flex;background:var(--night);border:1px solid var(--line);border-radius:12px;padding:3px;gap:3px}
+.seg button{flex:1;padding:9px 6px;border:0;background:transparent;font-size:.88rem;border-radius:9px}
+.seg button.sel{background:var(--eave)}
+
+select{width:100%;font:500 .95rem var(--f-body);color:var(--text);background:var(--eave);border:1px solid var(--line);border-radius:12px;padding:11px}
+.hint{font-size:.83rem;color:var(--muted);margin:0}
+.note{font-size:.88rem;color:var(--text);background:var(--eave);border-radius:10px;padding:10px 12px;margin:0}
+.note.warn{border-left:3px solid var(--warn)}
+
+details summary{cursor:pointer;color:var(--muted);font-size:.85rem}
+.log{font:400 .72rem/1.5 var(--f-mono);color:var(--muted);max-height:220px;overflow:auto;white-space:pre-wrap;word-break:break-all;background:var(--night);border-radius:10px;padding:8px;margin-top:8px}
+.log b{color:var(--glow);font-weight:400}
+.log em{color:var(--ok);font-style:normal}
+.toast{position:fixed;left:50%;bottom:calc(18px + env(safe-area-inset-bottom,0px));transform:translateX(-50%);background:var(--eave);border:1px solid var(--line);padding:10px 16px;border-radius:12px;font-size:.9rem;opacity:0;transition:opacity .2s;pointer-events:none;max-width:calc(100% - 32px)}
+.toast.show{opacity:1}
+.locked{opacity:.5;pointer-events:none}
+@media (prefers-reduced-motion:reduce){*{transition:none!important}}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <div class="brand"><img src="logo.png" alt="Light Controls logo" width="56" height="56"><h1>Light Controls</h1></div>
+    <div class="status" id="status"><span class="dot"></span><span id="statusText">Not connected</span></div>
+  </header>
+
+  <section class="roof off" id="roof" aria-label="Preview of the light strip">
+    <svg viewBox="0 0 300 40" aria-hidden="true"><path d="M0 38 L150 4 L300 38" fill="none" stroke="#2f3a5c" stroke-width="3" stroke-linejoin="round"/></svg>
+    <div class="bulbs" id="bulbs"></div>
+    <div class="roof-meta"><span id="metaMode">Lights off</span><span id="metaSeg">15 segments</span></div>
+  </section>
+
+  <p class="note warn" id="noBt" hidden>This browser can't use Bluetooth. Open this page in <strong>Chrome on your Android phone</strong> (or Chrome/Edge on a computer). Bluetooth web pages don't work on iPhone.</p>
+
+  <div class="row">
+    <button class="primary connect" id="btnConnect">Connect to lights</button>
+    <button id="btnDisconnect" hidden>Disconnect</button>
+  </div>
+
+  <div id="controls" class="locked" style="display:flex;flex-direction:column;gap:14px">
+    <button class="power" id="btnPower" aria-pressed="false">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M12 3v8"/><path d="M6.3 7.2a8 8 0 1 0 11.4 0"/></svg>
+      <span id="powerLabel">Turn on</span>
+    </button>
+
+    <section class="card">
+      <h2>Brightness</h2>
+      <div class="slider"><input type="range" id="bright" min="1" max="100" value="80" aria-label="Brightness"><output id="brightOut">80%</output></div>
+    </section>
+
+    <section class="card">
+      <h2>Solid color</h2>
+      <div class="swatches" id="swatches"></div>
+    </section>
+
+    <section class="card">
+      <h2>Patterns <span class="hint" style="text-transform:none;letter-spacing:0">repeats along the roof</span></h2>
+      <div class="patterns" id="patterns"></div>
+    </section>
+
+    <section class="card">
+      <h2>Animation</h2>
+      <div class="seg" id="effectSeg" role="group" aria-label="Animation style"></div>
+      <label class="hint" for="effectMore">More styles from the controller</label>
+      <select id="effectMore"></select>
+      <div class="slider"><span class="hint" style="min-width:3.5em">Speed</span><input type="range" id="speed" min="1" max="100" value="50" aria-label="Speed"><output id="speedOut">50</output></div>
+      <button id="btnEffect">Animate current pattern</button>
+      <p class="hint">Uses the colors of the selected pattern. Styles 4 and up weren't named in the old app, so try them and see what each one does.</p>
+    </section>
+
+    <section class="card">
+      <h2>Setup</h2>
+      <label class="hint" for="segCount">Number of color segments on your strip</label>
+      <div class="slider"><input type="range" id="segCount" min="1" max="60" value="15" aria-label="Segments"><output id="segOut">15</output></div>
+      <p class="hint">The app reads this from the controller when it connects. Change it only if patterns look misaligned.</p>
+      <details>
+        <summary>Bluetooth log (for troubleshooting)</summary>
+        <div class="log" id="log"></div>
+      </details>
+    </section>
+  </div>
+</div>
+<div class="toast" id="toast" role="status"></div>
+
+<script>
+/* ===== Protocol (decoded from the TPorig Android app) =====
+   Service 0xFFE0, characteristic 0xFFE1 (write + notify).
+   Frame: AA 55 | len(2, whole frame) | serial(2) | flag(0x80 request, 0x40 ack) | cmd | payload | checksum
+   checksum = (sum of all previous bytes) XOR 0x33, low byte.
+   cmd 0x83 = set attributes, 0x82 = read attributes, 0x87 = time sync.
+   Attribute = index(2) type(1) [len(2) for byte arrays] value (big-endian). */
+const SVC = 0xffe0, CHR = 0xffe1;
+const T = {BYTE:1, SHORT:4, INT:5, BYTE_ARRAY:8, BOOL:9};
+const A = {POWER:1, MODE:2, COLOR:6, BRIGHT:7, SEGMENTS_COLOR:15, EFFECT:20, SCENE_ID:22, IC_SEGMENT:103};
+const MODE = {MUSIC:1, COLOR:2, SCENE:3, WARM:4};
+let serial = 0xffff;
+
+function frame(cmd, payload = [], flag = 0x80, ser) {
+  const len = payload.length + 9;
+  const s = ser ?? serial;
+  if (ser === undefined) { serial = serial - 1; if (serial <= 0) serial = 0xffff; }
+  const b = [0xaa, 0x55, (len >> 8) & 255, len & 255, (s >> 8) & 255, s & 255, flag, cmd & 255, ...payload];
+  const sum = b.reduce((a, x) => a + x, 0);
+  b.push((sum ^ 0x33) & 255);
+  return new Uint8Array(b);
+}
+function be(v, n) { const out = []; for (let i = n - 1; i >= 0; i--) out.push((v >>> (i * 8)) & 255); return out; }
+function attr(idx, type, value) {
+  const head = [...be(idx, 2), type];
+  switch (type) {
+    case T.BOOL: case T.BYTE: return [...head, value & 255];
+    case T.SHORT: return [...head, ...be(value, 2)];
+    case T.INT: return [...head, ...be(value, 4)];
+    case T.BYTE_ARRAY: return [...head, ...be(value.length, 2), ...value];
+  }
+}
+const rgbInt = hex => parseInt(hex.replace('#', ''), 16);
+const rgb4 = hex => { const n = rgbInt(hex); return [0, (n >> 16) & 255, (n >> 8) & 255, n & 255]; };
+
+function parseAttrs(p) {
+  const out = {}; let i = 0;
+  while (i + 3 <= p.length) {
+    const idx = (p[i] << 8) | p[i + 1], type = p[i + 2]; i += 3;
+    let len = {1:1, 2:2, 3:4, 4:2, 5:4, 6:4, 7:1, 9:1}[type];
+    if (type === 0 || type === 8 || type === 10) { len = (p[i] << 8) | p[i + 1]; i += 2; }
+    if (!len || i + len > p.length) break;
+    const v = p.slice(i, i + len); i += len;
+    out[idx] = len <= 4 && type !== 8 ? v.reduce((a, x) => a * 256 + x, 0) : v;
+  }
+  return out;
+}
+
+/* ===== Bluetooth ===== */
+let device, chr, writeQ = Promise.resolve(), rxBuf = [];
+const $ = id => document.getElementById(id);
+const hex = a => Array.from(a, x => x.toString(16).padStart(2, '0')).join(' ');
+
+function log(dir, bytes, note = '') {
+  const el = $('log'); const line = document.createElement('div');
+  line.innerHTML = (dir === '>' ? '<b>→</b> ' : '<em>←</em> ') + hex(bytes) + (note ? '  ' + note : '');
+  el.prepend(line); while (el.children.length > 80) el.lastChild.remove();
+}
+function send(bytes, note) {
+  if (!chr) return Promise.resolve();
+  writeQ = writeQ.then(async () => {
+    log('>', bytes, note);
+    try {
+      if (chr.properties.write) await chr.writeValueWithResponse(bytes);
+      else await chr.writeValueWithoutResponse(bytes);
+    } catch (e) { log('!', [], 'write failed: ' + e.message); }
+  });
+  return writeQ;
+}
+const setAttrs = (list, note) => send(frame(0x83, list.flat()), note);
+
+function syncTime() {
+  const now = Math.floor(Date.now() / 1000), off = -new Date().getTimezoneOffset() * 60;
+  return send(frame(0x87, [...be(now, 4), ...be(off >>> 0, 4)]), 'time sync');
+}
+
+function onNotify(e) {
+  const d = new Uint8Array(e.target.value.buffer);
+  rxBuf.push(...d);
+  while (rxBuf.length >= 9) {
+    let s = -1;
+    for (let i = 0; i + 1 < rxBuf.length; i++) if (rxBuf[i] === 0xaa && rxBuf[i + 1] === 0x55) { s = i; break; }
+    if (s < 0) { rxBuf = []; return; }
+    if (s > 0) rxBuf = rxBuf.slice(s);
+    const len = (rxBuf[2] << 8) | rxBuf[3];
+    if (len < 9 || len > 1024) { rxBuf = rxBuf.slice(2); continue; }
+    if (rxBuf.length < len) return;
+    const f = rxBuf.slice(0, len); rxBuf = rxBuf.slice(len);
+    log('<', f);
+    handleFrame(f);
+  }
+}
+function handleFrame(f) {
+  const ser = (f[4] << 8) | f[5], flag = f[6], cmd = f[7], payload = f.slice(8, f.length - 1);
+  if (flag === 0x80 && cmd !== 0xe0 && cmd !== 0xe1) send(frame(cmd, [], 0x40, ser), 'ack');
+  if (cmd === 0x09) syncTime();
+  if (cmd === 0x81 || cmd === 0x82 || cmd === 0x83) applyState(parseAttrs(payload));
+}
+function applyState(a) {
+  if (A.POWER in a) setPowerUI(!!a[A.POWER]);
+  if (A.BRIGHT in a && a[A.BRIGHT] > 0) { $('bright').value = a[A.BRIGHT]; $('brightOut').textContent = a[A.BRIGHT] + '%'; }
+  if (A.IC_SEGMENT in a && a[A.IC_SEGMENT] > 0) { state.segments = a[A.IC_SEGMENT]; $('segCount').value = state.segments; $('segOut').textContent = state.segments; renderBulbs(); }
+  if (A.COLOR in a && typeof a[A.COLOR] === 'number') { state.colors = ['#' + a[A.COLOR].toString(16).padStart(6, '0').slice(-6)]; renderBulbs(); }
+}
+
+async function connect() {
+  try {
+    setStatus('busy', 'Searching…');
+    device = await navigator.bluetooth.requestDevice({acceptAllDevices: true, optionalServices: [SVC]});
+    device.addEventListener('gattserverdisconnected', onDisconnected);
+    await openGatt();
+  } catch (e) {
+    setStatus('', 'Not connected');
+    if (e.name !== 'NotFoundError') toast(friendlyError(e));
+  }
+}
+async function openGatt() {
+  setStatus('busy', 'Connecting…');
+  const server = await device.gatt.connect();
+  let svc;
+  try { svc = await server.getPrimaryService(SVC); }
+  catch { device.gatt.disconnect(); throw new Error('That device isn\'t the light controller. Try another one in the list.'); }
+  chr = await svc.getCharacteristic(CHR);
+  await chr.startNotifications();
+  chr.addEventListener('characteristicvaluechanged', onNotify);
+  setStatus('on', device.name || 'Connected');
+  $('controls').classList.remove('locked');
+  $('btnConnect').hidden = true; $('btnDisconnect').hidden = false;
+  try { localStorage.setItem('lc.dev', device.id); } catch {}
+  await syncTime();
+  await send(frame(0x82, []), 'read state');
+}
+function onDisconnected() {
+  chr = null;
+  $('controls').classList.add('locked');
+  $('btnConnect').hidden = false; $('btnDisconnect').hidden = true;
+  setStatus('', 'Disconnected');
+}
+function friendlyError(e) {
+  if (/User cancelled|chooser/i.test(e.message)) return 'No device picked.';
+  if (/Bluetooth adapter not available|globally disabled/i.test(e.message)) return 'Turn on Bluetooth and Location on your phone, then try again.';
+  return e.message;
+}
+async function tryAutoReconnect() {
+  if (!navigator.bluetooth?.getDevices) return;
+  let id; try { id = localStorage.getItem('lc.dev'); } catch {}
+  if (!id) return;
+  const list = await navigator.bluetooth.getDevices();
+  const d = list.find(x => x.id === id); if (!d) return;
+  device = d; device.addEventListener('gattserverdisconnected', onDisconnected);
+  try { await openGatt(); } catch { setStatus('', 'Tap Connect'); }
+}
+
+/* ===== UI state ===== */
+const state = {power: false, colors: ['#ffb547'], segments: 15, effect: 1, pattern: null};
+const COLORS = ['#ff0000','#ff6a00','#ffb547','#ffd400','#00d34d','#00c8ff','#0047ff','#7a2cff','#ff2fa8','#ffffff','#ffd9a0'];
+const PATTERNS = [
+  {name:'Christmas', c:['#ff0000','#00d34d']},
+  {name:'Classic warm', c:['#ffd9a0']},
+  {name:'Multicolor', c:['#ff0000','#00d34d','#0047ff','#ffd400','#ff6a00']},
+  {name:'Halloween', c:['#ff6a00','#7a2cff']},
+  {name:'Fourth of July', c:['#ff0000','#ffffff','#0047ff']},
+  {name:'Thanksgiving', c:['#ff6a00','#ffb547','#b33000']},
+  {name:'Valentine\'s', c:['#ff2fa8','#ff0000','#ffffff']},
+  {name:'St. Patrick\'s', c:['#00d34d','#ffffff']},
+  {name:'Easter', c:['#ffd400','#ff9ad5','#9be7ff','#c6a6ff']},
+  {name:'Hanukkah', c:['#0047ff','#ffffff']},
+  {name:'Game day', c:['#0047ff','#ffb547']},
+  {name:'Icicle', c:['#ffffff','#9be7ff']},
+];
+const STYLES = {1:'Fade', 2:'Jump', 3:'Twinkle'};
+
+function setStatus(cls, text) { $('status').className = 'status ' + cls; $('statusText').textContent = text; }
+function toast(msg) { const t = $('toast'); t.textContent = msg; t.classList.add('show'); clearTimeout(t._h); t._h = setTimeout(() => t.classList.remove('show'), 2800); }
+
+function renderBulbs() {
+  const n = Math.min(state.segments, 30), b = $('bulbs');
+  b.style.gridTemplateColumns = `repeat(${n},1fr)`;
+  b.innerHTML = '';
+  for (let i = 0; i < n; i++) {
+    const c = state.colors[i % state.colors.length], el = document.createElement('i');
+    el.className = 'bulb'; el.style.background = c; el.style.boxShadow = `0 0 10px 1px ${c}`;
+    el.style.opacity = 0.35 + 0.65 * ($('bright').value / 100);
+    b.appendChild(el);
+  }
+  $('metaSeg').textContent = state.segments + ' segments';
+}
+function setPowerUI(on) {
+  state.power = on;
+  $('btnPower').classList.toggle('is-on', on); $('btnPower').setAttribute('aria-pressed', on);
+  $('powerLabel').textContent = on ? 'Turn off' : 'Turn on';
+  $('roof').classList.toggle('off', !on);
+  $('metaMode').textContent = on ? 'Lights on' : 'Lights off';
+}
+
+$('btnConnect').onclick = connect;
+$('btnDisconnect').onclick = () => device?.gatt.disconnect();
+$('btnPower').onclick = () => { const on = !state.power; setPowerUI(on); setAttrs([attr(A.POWER, T.BOOL, on ? 1 : 0)], on ? 'power on' : 'power off'); };
+
+let bTimer;
+$('bright').oninput = e => {
+  $('brightOut').textContent = e.target.value + '%'; renderBulbs();
+  clearTimeout(bTimer); bTimer = setTimeout(() => setAttrs([attr(A.BRIGHT, T.BYTE, +e.target.value)], 'brightness'), 120);
+};
+
+function sendSolid(hexc) {
+  state.colors = [hexc]; state.pattern = null; markPattern(); renderBulbs(); setPowerUI(true);
+  setAttrs([attr(A.POWER, T.BOOL, 1), attr(A.MODE, T.BYTE, MODE.COLOR), attr(A.BRIGHT, T.BYTE, +$('bright').value), attr(A.COLOR, T.INT, rgbInt(hexc))], 'solid ' + hexc);
+}
+function sendPattern(cols) {
+  state.colors = cols; renderBulbs(); setPowerUI(true);
+  const seg = []; for (let i = 0; i < state.segments; i++) seg.push(...rgb4(cols[i % cols.length]));
+  setAttrs([attr(A.POWER, T.BOOL, 1), attr(A.MODE, T.BYTE, MODE.COLOR), attr(A.SEGMENTS_COLOR, T.BYTE_ARRAY, seg)], 'pattern');
+}
+function sendEffect() {
+  const cols = state.colors.slice(0, 16), speed = +$('speed').value;
+  const eff = [1, speed, state.effect, 0, cols.length, ...cols.flatMap(rgb4), 0, 255];
+  setPowerUI(true);
+  setAttrs([attr(A.POWER, T.BOOL, 1), attr(A.MODE, T.BYTE, MODE.SCENE), attr(A.EFFECT, T.BYTE_ARRAY, eff), attr(A.SCENE_ID, T.INT, 0)], 'effect style ' + state.effect);
+  $('metaMode').textContent = (STYLES[state.effect] || 'Style ' + state.effect) + ' · speed ' + speed;
+}
+
+// swatches
+COLORS.forEach(c => {
+  const b = document.createElement('button'); b.className = 'sw'; b.style.background = c; b.setAttribute('aria-label', 'Color ' + c);
+  b.onclick = () => { document.querySelectorAll('.sw').forEach(x => x.classList.remove('sel')); b.classList.add('sel'); sendSolid(c); };
+  $('swatches').appendChild(b);
+});
+{ const b = document.createElement('label'); b.className = 'sw custom'; b.title = 'Pick any color';
+  const inp = document.createElement('input'); inp.type = 'color'; inp.id = 'customColor'; inp.value = '#ffb547'; inp.setAttribute('aria-label', 'Pick any color');
+  inp.onchange = () => sendSolid(inp.value); b.appendChild(inp); $('swatches').appendChild(b); }
+
+// patterns
+function markPattern() { document.querySelectorAll('.pat').forEach((x, i) => x.classList.toggle('sel', i === state.pattern)); }
+PATTERNS.forEach((p, i) => {
+  const b = document.createElement('button'); b.className = 'pat';
+  b.innerHTML = `<div class="strip">${p.c.map(c => `<i style="background:${c}"></i>`).join('')}</div><span>${p.name}</span>`;
+  b.onclick = () => { state.pattern = i; markPattern(); sendPattern(p.c); };
+  $('patterns').appendChild(b);
+});
+
+// effects
+function markEffect() {
+  document.querySelectorAll('#effectSeg button').forEach(x => x.classList.toggle('sel', +x.dataset.s === state.effect));
+  $('effectMore').value = String(state.effect);
+}
+Object.entries(STYLES).forEach(([s, name]) => {
+  const b = document.createElement('button'); b.textContent = name; b.dataset.s = s;
+  b.onclick = () => { state.effect = +s; markEffect(); sendEffect(); };
+  $('effectSeg').appendChild(b);
+});
+for (let s = 1; s <= 20; s++) { const o = document.createElement('option'); o.value = s; o.textContent = STYLES[s] ? `Style ${s} · ${STYLES[s]}` : `Style ${s}`; $('effectMore').appendChild(o); }
+$('effectMore').onchange = e => { state.effect = +e.target.value; markEffect(); sendEffect(); };
+$('speed').oninput = e => $('speedOut').textContent = e.target.value;
+$('speed').onchange = () => { if (chr) sendEffect(); };
+$('btnEffect').onclick = sendEffect;
+
+$('segCount').oninput = e => { state.segments = +e.target.value; $('segOut').textContent = e.target.value; renderBulbs(); };
+
+// boot
+markEffect(); renderBulbs();
+if (!navigator.bluetooth) { $('noBt').hidden = false; $('btnConnect').disabled = true; }
+else tryAutoReconnect().catch(() => {});
+if (typeof module !== 'undefined') module.exports = {frame, attr, rgb4, parseAttrs, T, A};
+</script>
+</body>
+</html>
