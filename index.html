@@ -104,6 +104,12 @@ details summary{cursor:pointer;color:var(--muted);font-size:.85rem}
 .lamp-glow{width:44px;height:44px;border-radius:50%;background:#2a2f40;transition:background .3s,box-shadow .3s;flex:none}
 .lamp .power{padding:12px;font-size:1rem}
 .lamp .swatches{grid-template-columns:repeat(6,1fr)}
+.tiles{display:grid;gap:6px}
+.tile{aspect-ratio:1;padding:0;border-radius:10px;font:500 .75rem var(--f-mono);color:rgba(255,255,255,.85);text-shadow:0 0 3px #000;background:#2a2f40}
+.lamp .paint{grid-template-columns:repeat(12,1fr);gap:5px}
+.pane{display:flex;flex-direction:column;gap:10px}
+.pane[hidden]{display:none}
+.modes button{padding:9px 2px;font-size:.82rem}
 @media (prefers-reduced-motion:reduce){*{transition:none!important}}
 </style>
 </head>
@@ -182,7 +188,7 @@ details summary{cursor:pointer;color:var(--muted);font-size:.85rem}
     <div id="lampList" style="display:flex;flex-direction:column;gap:14px"></div>
     <section class="card">
       <h2>Lamp troubleshooting</h2>
-      <p class="hint">If a lamp connects but colors don't change, open its <em>Fix-it</em> settings and try format B, then C. If max brightness looks dim, switch the brightness range.</p>
+      <p class="hint">If a lamp connects but colors or whites don't change, open its <em>Fix-it</em> settings and try format B, then C. If max brightness looks dim, switch the brightness range. If Music does nothing, switch the music format. If the Sections painter doesn't line up with the lamp, change the number of sections.</p>
       <details>
         <summary>Lamp Bluetooth log</summary>
         <div class="log" id="lampLog"></div>
@@ -467,10 +473,48 @@ const GV_FORMATS = {
   C: {label: 'C · RGBIC', pre: [0x15, 0x01], post: [0, 0, 0, 0, 0, 0xff, 0x7f]},
 };
 const LAMPS = [
-  {id: 'table', name: 'Table lamp', model: 'H6022', fmt: 'A', scale: 255},
-  {id: 'floor', name: 'Floor lamp', model: 'H6076', fmt: 'C', scale: 255},
+  {id: 'table', name: 'Table lamp', model: 'H6022', fmt: 'A', scale: 255, sections: 1},
+  {id: 'floor', name: 'Floor lamp', model: 'H6076', fmt: 'C', scale: 255, sections: 7},
 ];
 const LAMP_COLORS = ['#ff0000','#ff6a00','#ffb547','#ffd400','#00d34d','#00c8ff','#0047ff','#7a2cff','#ff2fa8','#ffffff','#ffd9a0'];
+const WHITES = [['Candle', 2000], ['Warm', 2700], ['Soft', 3500], ['Daylight', 5000], ['Cool', 6500]];
+/* Built-in scene codes that most Govee lights understand: 33 05 04 <code, little-endian>.
+   Newer RGBIC lamps may ignore some of these (their fancy scenes are downloaded from Govee). */
+const LAMP_SCENES = [['Sunrise', 0x00], ['Sunset', 0x01], ['Night light', 0x02], ['Movie', 0x04], ['Dating', 0x05],
+  ['Romantic', 0x07], ['Blinking', 0x08], ['Candlelight', 0x09], ['Snowflake', 0x0f], ['Illumination', 0x3f], ['Cheerful', 0x40]];
+const MUSIC_MODES = [['Energic', 0], ['Spectrum', 1], ['Rolling', 2], ['Rhythm', 3]];
+
+/* App scenes: Light Controls animates the lamp itself, so they work on any model.
+   f(t seconds, section index, section count) -> [r,g,b]. They run while this page is open. */
+const hsv = (h, s, v) => { h = ((h % 1) + 1) % 1; const i = Math.floor(h * 6), f = h * 6 - i, p = v * (1 - s), q = v * (1 - f * s), u = v * (1 - (1 - f) * s);
+  const [r, g, b] = [[v, u, p], [q, v, p], [p, v, u], [p, q, v], [u, p, v], [v, p, q]][i % 6]; return [r * 255, g * 255, b * 255].map(Math.round); };
+const mix = (a, b, k) => a.map((x, i) => Math.round(x + (b[i] - x) * k));
+const hexRgb = h => { const n = rgbInt(h); return [(n >> 16) & 255, (n >> 8) & 255, n & 255]; };
+const noise = (t, i) => (Math.sin(t * 7.3 + i * 1.7) + Math.sin(t * 13.1 + i * 3.1) + Math.sin(t * 2.9 + i * 5.3)) / 3;
+const APP_SCENES = [
+  {name: 'Candle', fps: 8, f: (t, i) => { const k = 0.6 + 0.4 * Math.abs(noise(t * 1.5, i)); return [255, 120, 20].map(x => Math.round(x * k)); }},
+  {name: 'Fireplace', fps: 8, f: (t, i) => mix([255, 30, 0], [255, 150, 10], 0.5 + 0.5 * noise(t * 1.2, i))},
+  {name: 'Breathe', fps: 8, f: (t, i, n, lamp) => { const k = 0.15 + 0.85 * (0.5 - 0.5 * Math.cos(t * 1.4)); return hexRgb(lamp.color || '#ffb547').map(x => Math.round(x * k)); }},
+  {name: 'Rainbow', fps: 6, f: (t, i, n) => hsv(t / 12 + i / Math.max(n, 1), 1, 1)},
+  {name: 'Ocean', fps: 6, f: (t, i) => mix([0, 40, 255], [0, 220, 200], 0.5 + 0.5 * Math.sin(t * 0.8 + i * 0.9))},
+  {name: 'Sunset', fps: 4, f: (t, i, n) => { const s = [[255, 90, 0], [255, 40, 80], [140, 30, 200], [255, 160, 30]]; const x = (t / 6 + i / Math.max(n, 1)) % s.length; return mix(s[Math.floor(x)], s[(Math.floor(x) + 1) % s.length], x % 1); }},
+  {name: 'Aurora', fps: 6, f: (t, i) => mix([0, 255, 120], [120, 0, 255], 0.5 + 0.5 * Math.sin(t * 0.6 + i * 1.3))},
+  {name: 'Party', fps: 3, f: (t, i) => hsv(Math.floor(t * 2) * 0.618 + i * 0.29, 1, 1)},
+  {name: 'Christmas', fps: 2, f: (t, i) => ((i + Math.floor(t)) % 2) ? [255, 0, 0] : [0, 210, 60]},
+  {name: 'Halloween', fps: 3, f: (t, i) => ((i + Math.floor(t * 0.7)) % 2) ? [255, 90, 0] : [120, 30, 255]},
+  {name: 'Game day', fps: 3, f: (t, i) => ((i + Math.floor(t)) % 2) ? [0, 70, 255] : [255, 180, 70]},
+  {name: 'Police', fps: 6, f: (t, i, n) => (Math.floor(t * 3) % 2 === (i < n / 2 ? 0 : 1)) ? [255, 0, 0] : [0, 40, 255]},
+];
+
+function kelvinRgb(k) {
+  const t = k / 100; let r, g, b;
+  r = t <= 66 ? 255 : 329.7 * Math.pow(t - 60, -0.1332);
+  g = t <= 66 ? 99.47 * Math.log(t) - 161.12 : 288.12 * Math.pow(t - 60, -0.0755);
+  b = t >= 66 ? 255 : t <= 19 ? 0 : 138.52 * Math.log(t - 10) - 305.04;
+  return [r, g, b].map(x => Math.max(0, Math.min(255, Math.round(x))));
+}
+const ALL_MASK = [0xff, 0x7f];
+const maskBytes = list => { let m = 0; list.forEach(i => m |= 1 << i); return [m & 255, (m >> 8) & 255]; };
 
 function gvPacket(bytes) {
   const p = new Uint8Array(20); p.set(bytes.slice(0, 19));
@@ -483,10 +527,14 @@ function lampLog(lamp, dir, bytes, note = '') {
   el.prepend(line); while (el.children.length > 80) el.lastChild.remove();
 }
 function lampSave(lamp) {
-  try { localStorage.setItem('lc.lamp.' + lamp.id, JSON.stringify({fmt: lamp.fmt, scale: lamp.scale, dev: lamp.devId})); } catch {}
+  try { localStorage.setItem('lc.lamp.' + lamp.id, JSON.stringify({fmt: lamp.fmt, scale: lamp.scale, dev: lamp.devId, sections: lamp.sections, music: lamp.musicFmt, tab: lamp.tab})); } catch {}
 }
 function lampLoad(lamp) {
-  try { Object.assign(lamp, (({fmt, scale, dev}) => ({fmt: fmt || lamp.fmt, scale: scale || lamp.scale, devId: dev}))(JSON.parse(localStorage.getItem('lc.lamp.' + lamp.id)) || {})); } catch {}
+  let s = {}; try { s = JSON.parse(localStorage.getItem('lc.lamp.' + lamp.id)) || {}; } catch {}
+  lamp.fmt = s.fmt || lamp.fmt; lamp.scale = s.scale || lamp.scale; lamp.devId = s.dev;
+  lamp.sections = s.sections || lamp.sections; lamp.musicFmt = s.music || (lamp.fmt === 'C' ? 'new' : 'old');
+  lamp.tab = s.tab || 'color'; lamp.paint = '#ff0000'; lamp.segColors = Array(15).fill(null);
+  lamp.sceneSpeed = 50; lamp.sens = 80;
 }
 function lampSend(lamp, bytes, note) {
   if (!lamp.chr) return Promise.resolve();
@@ -500,7 +548,13 @@ function lampSend(lamp, bytes, note) {
   });
   return lamp.q;
 }
+function stopAnim(lamp) {
+  if (!lamp.anim) return;
+  clearInterval(lamp.anim); lamp.anim = null; lamp.animName = null;
+  lamp.el?.querySelectorAll('.appscene').forEach(b => b.classList.remove('sel'));
+}
 function lampPower(lamp, on) {
+  if (!on) stopAnim(lamp);
   lamp.on = on; lampUI(lamp);
   return lampSend(lamp, [0x33, 0x01, on ? 1 : 0], on ? 'power on' : 'power off');
 }
@@ -509,11 +563,63 @@ function lampBright(lamp, pct) {
   const v = Math.max(1, Math.round(pct / 100 * lamp.scale));
   return lampSend(lamp, [0x33, 0x04, v], 'brightness ' + pct + '%');
 }
+// Raw color packet in this lamp's format; mask only applies to format C.
+function colorBytes(lamp, [r, g, b], mask = ALL_MASK) {
+  const f = GV_FORMATS[lamp.fmt];
+  const post = lamp.fmt === 'C' ? [0, 0, 0, 0, 0, ...mask] : f.post;
+  return [0x33, 0x05, ...f.pre, r, g, b, ...post];
+}
 function lampColor(lamp, hexc) {
-  lamp.color = hexc; lamp.on = true; lampUI(lamp);
-  const n = rgbInt(hexc), f = GV_FORMATS[lamp.fmt];
+  stopAnim(lamp);
+  lamp.color = hexc; lamp.on = true; lamp.segColors.fill(hexc); lampUI(lamp);
   lampSend(lamp, [0x33, 0x01, 1]);
-  return lampSend(lamp, [0x33, 0x05, ...f.pre, (n >> 16) & 255, (n >> 8) & 255, n & 255, ...f.post], `color ${hexc} (format ${lamp.fmt})`);
+  return lampSend(lamp, colorBytes(lamp, hexRgb(hexc)), `color ${hexc} (format ${lamp.fmt})`);
+}
+function lampWhite(lamp, k) {
+  stopAnim(lamp);
+  const [r, g, b] = kelvinRgb(k), hi = (k >> 8) & 255, lo = k & 255;
+  lamp.color = '#' + [r, g, b].map(x => x.toString(16).padStart(2, '0')).join(''); lamp.on = true; lampUI(lamp);
+  const bytes = lamp.fmt === 'A' ? [0x33, 0x05, 0x02, 0xff, 0xff, 0xff, 0x01, r, g, b]
+    : lamp.fmt === 'B' ? [0x33, 0x05, 0x0d, 0xff, 0xff, 0xff, hi, lo, r, g, b]
+    : [0x33, 0x05, 0x15, 0x01, 0xff, 0xff, 0xff, hi, lo, r, g, b, ...ALL_MASK];
+  lampSend(lamp, [0x33, 0x01, 1]);
+  return lampSend(lamp, bytes, `white ${k}K`);
+}
+// Section painting (format C lamps): one packet per color, covering every section with that color.
+function lampSections(lamp, colors, note = 'sections', power = true) {
+  const groups = {};
+  colors.forEach((c, i) => { if (c) (groups[c] ||= []).push(i); });
+  if (power) lampSend(lamp, [0x33, 0x01, 1]);
+  return Promise.all(Object.entries(groups).map(([c, idx]) => lampSend(lamp, colorBytes(lamp, hexRgb(c), maskBytes(idx)), note ? `${note} ${c} → ${idx.map(i => i + 1).join(',')}` : '')));
+}
+function lampScene(lamp, code, name) {
+  stopAnim(lamp); lamp.on = true; lampUI(lamp);
+  lampSend(lamp, [0x33, 0x01, 1]);
+  return lampSend(lamp, [0x33, 0x05, 0x04, code & 255, (code >> 8) & 255], `scene ${name || ''} #${code}`);
+}
+function lampMusic(lamp, mode, name) {
+  stopAnim(lamp); lamp.on = true; lampUI(lamp);
+  const s = Math.round(lamp.sens * 0.99), [r, g, b] = hexRgb(lamp.color || '#ff0000');
+  const bytes = lamp.musicFmt === 'new' ? [0x33, 0x05, 0x13, mode, s] : [0x33, 0x05, 0x01, mode, 0x00, r, g, b];
+  lampSend(lamp, [0x33, 0x01, 1]);
+  return lampSend(lamp, bytes, `music ${name} (${lamp.musicFmt})`);
+}
+function lampAppScene(lamp, sc) {
+  stopAnim(lamp); lamp.on = true; lamp.animName = sc.name; lampUI(lamp);
+  lampSend(lamp, [0x33, 0x01, 1], 'app scene ' + sc.name);
+  const t0 = performance.now();
+  let busy = false;
+  const n = lamp.fmt === 'C' ? lamp.sections : 1;
+  lamp.anim = setInterval(async () => {
+    if (busy || !lamp.chr) return; busy = true;
+    const t = (performance.now() - t0) / 1000 * (0.25 + lamp.sceneSpeed / 40);
+    const cols = Array.from({length: n}, (_, i) => sc.f(t, i, n, lamp));
+    const hexes = cols.map(c => '#' + c.map(x => (x & 0xf0 | 0x08).toString(16).padStart(2, '0')).join('')); // round so similar colors share a packet
+    lamp.el.querySelector('.lamp-glow').style.background = hexes[0];
+    if (n > 1) await lampSections(lamp, hexes, '', false);
+    else await lampSend(lamp, colorBytes(lamp, cols[0]));
+    busy = false;
+  }, 1000 / sc.fps);
 }
 
 async function lampConnect(lamp, picked) {
@@ -551,7 +657,7 @@ async function lampConnect(lamp, picked) {
   }
 }
 function lampDropped(lamp) {
-  clearInterval(lamp.ka); lamp.chr = null;
+  clearInterval(lamp.ka); stopAnim(lamp); lamp.chr = null;
   lampStatus(lamp, '', 'Disconnected'); lampUI(lamp);
 }
 function lampStatus(lamp, cls, text) {
@@ -567,9 +673,37 @@ function lampUI(lamp) {
   pw.classList.toggle('is-on', !!lamp.on); pw.setAttribute('aria-pressed', !!lamp.on);
   pw.querySelector('span').textContent = lamp.on ? 'Turn off' : 'Turn on';
   const g = el.querySelector('.lamp-glow'), c = lamp.color || '#ffd9a0';
-  g.style.background = lamp.on ? c : '#2a2f40';
+  if (!lamp.anim) g.style.background = lamp.on ? c : '#2a2f40';
   g.style.boxShadow = lamp.on ? `0 0 ${8 + (lamp.bright || 80) / 4}px ${c}` : 'none';
   g.style.opacity = lamp.on ? 0.4 + 0.6 * ((lamp.bright || 80) / 100) : 1;
+  // mode tabs; "Sections" only for lamps that support per-section color
+  const segOk = lamp.fmt === 'C' && lamp.sections > 1;
+  el.querySelector('.modes [data-p=sections]').hidden = !segOk;
+  if (!segOk && lamp.tab === 'sections') lamp.tab = 'color';
+  el.querySelectorAll('.modes button').forEach(b => b.classList.toggle('sel', b.dataset.p === lamp.tab));
+  el.querySelectorAll('.pane').forEach(p => p.hidden = p.dataset.p !== lamp.tab);
+  const tiles = el.querySelector('.tiles');
+  if (tiles.children.length !== lamp.sections) buildTiles(lamp);
+  [...tiles.children].forEach((t, i) => t.style.background = lamp.segColors[i] || '#2a2f40');
+}
+function buildTiles(lamp) {
+  const tiles = lamp.el.querySelector('.tiles'); tiles.innerHTML = '';
+  tiles.style.gridTemplateColumns = `repeat(${Math.min(lamp.sections, 8)},1fr)`;
+  for (let i = 0; i < lamp.sections; i++) {
+    const t = document.createElement('button'); t.className = 'tile'; t.textContent = i + 1; t.setAttribute('aria-label', 'Section ' + (i + 1));
+    t.onclick = () => { stopAnim(lamp); lamp.segColors[i] = lamp.paint; lamp.on = true; lampUI(lamp); lampSections(lamp, lamp.segColors.map((c, j) => j === i ? c : null), 'section'); };
+    tiles.appendChild(t);
+  }
+}
+function swatchRow(container, colors, onPick, withCustom = true) {
+  colors.forEach(c => {
+    const b = document.createElement('button'); b.className = 'sw'; b.style.background = c; b.setAttribute('aria-label', 'Color ' + c);
+    b.onclick = () => { container.querySelectorAll('.sw').forEach(x => x.classList.remove('sel')); b.classList.add('sel'); onPick(c); };
+    container.appendChild(b);
+  });
+  if (withCustom) { const l = document.createElement('label'); l.className = 'sw custom'; l.title = 'Pick any color';
+    const inp = document.createElement('input'); inp.type = 'color'; inp.value = '#ffb547'; inp.setAttribute('aria-label', 'Pick any color');
+    inp.onchange = () => onPick(inp.value); l.appendChild(inp); container.appendChild(l); }
 }
 function buildLamp(lamp) {
   lampLoad(lamp);
@@ -589,8 +723,37 @@ function buildLamp(lamp) {
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M12 3v8"/><path d="M6.3 7.2a8 8 0 1 0 11.4 0"/></svg>
         <span>Turn on</span>
       </button>
-      <div class="slider"><input type="range" min="1" max="100" value="80" aria-label="${lamp.name} brightness"><output>80%</output></div>
-      <div class="swatches"></div>
+      <div class="slider"><input type="range" class="bright" min="1" max="100" value="80" aria-label="${lamp.name} brightness"><output>80%</output></div>
+      <div class="seg modes" role="tablist">
+        <button data-p="color">Color</button><button data-p="white">White</button><button data-p="sections">Sections</button><button data-p="scenes">Scenes</button><button data-p="music">Music</button>
+      </div>
+      <div class="pane" data-p="color"><div class="swatches colors"></div></div>
+      <div class="pane" data-p="white">
+        <div class="row whites"></div>
+        <div class="slider"><span class="hint" style="min-width:2.8em">Warm</span><input type="range" class="kelvin" min="2000" max="9000" step="100" value="2700" aria-label="White temperature"><span class="hint">Cool</span></div>
+        <p class="hint kout">2700K</p>
+      </div>
+      <div class="pane" data-p="sections">
+        <p class="hint">Pick a color, then tap sections to paint them. Or tap a pattern.</p>
+        <div class="swatches paint"></div>
+        <div class="tiles"></div>
+        <div class="patterns lamp-pats"></div>
+      </div>
+      <div class="pane" data-p="scenes">
+        <h2>App scenes <span class="hint" style="text-transform:none;letter-spacing:0">run while this page is open</span></h2>
+        <div class="patterns appscenes"></div>
+        <div class="slider"><span class="hint" style="min-width:3.5em">Speed</span><input type="range" class="sspeed" min="1" max="100" value="50" aria-label="Scene speed"><output>50</output></div>
+        <h2 style="margin-top:6px">Lamp's own scenes <span class="hint" style="text-transform:none;letter-spacing:0">keep running when you close the app</span></h2>
+        <div class="patterns lampscenes"></div>
+        <label class="hint">Try scene number</label>
+        <div class="row"><select class="scenenum" style="flex:1"></select><button class="scenego">Try</button></div>
+        <p class="hint">Some lamps ignore some built-in scenes. If nothing changes, try another one, or use an app scene.</p>
+      </div>
+      <div class="pane" data-p="music">
+        <p class="hint">Uses the lamp's built-in microphone, so put on music near the lamp.</p>
+        <div class="patterns music"></div>
+        <div class="slider"><span class="hint" style="min-width:5.5em">Sensitivity</span><input type="range" class="sens" min="1" max="100" value="80" aria-label="Mic sensitivity"><output>80</output></div>
+      </div>
       <details>
         <summary>Fix-it settings</summary>
         <div style="display:flex;flex-direction:column;gap:10px;margin-top:10px">
@@ -598,33 +761,72 @@ function buildLamp(lamp) {
           <div class="seg fmt"></div>
           <label class="hint">Brightness range</label>
           <div class="seg scale"><button data-v="100">0–100</button><button data-v="255">0–255</button></div>
+          <label class="hint">Number of color sections (format C only)</label>
+          <div class="slider"><input type="range" class="nsec" min="1" max="15" value="${lamp.sections}" aria-label="Sections"><output>${lamp.sections}</output></div>
+          <label class="hint">Music mode format (if Music does nothing, switch this)</label>
+          <div class="seg mfmt"><button data-v="old">1 · older</button><button data-v="new">2 · newer</button></div>
         </div>
       </details>
     </div>`;
-  el.querySelector('.lamp-connect').onclick = () => lampConnect(lamp);
-  el.querySelector('.lamp-disconnect').onclick = () => lamp.dev?.gatt.disconnect();
-  el.querySelector('.power').onclick = () => lampPower(lamp, !lamp.on);
-  const rng = el.querySelector('input[type=range]'), out = el.querySelector('output');
+  const q = s => el.querySelector(s);
+  q('.lamp-connect').onclick = () => lampConnect(lamp);
+  q('.lamp-disconnect').onclick = () => lamp.dev?.gatt.disconnect();
+  q('.power').onclick = () => lampPower(lamp, !lamp.on);
+  const rng = q('.bright'), out = rng.nextElementSibling;
   let t; rng.oninput = () => { out.textContent = rng.value + '%'; clearTimeout(t); t = setTimeout(() => lampBright(lamp, +rng.value), 120); };
-  const sw = el.querySelector('.swatches');
-  LAMP_COLORS.forEach(c => {
-    const b = document.createElement('button'); b.className = 'sw'; b.style.background = c; b.setAttribute('aria-label', 'Color ' + c);
-    b.onclick = () => { sw.querySelectorAll('.sw').forEach(x => x.classList.remove('sel')); b.classList.add('sel'); lampColor(lamp, c); };
-    sw.appendChild(b);
+  el.querySelectorAll('.modes button').forEach(b => b.onclick = () => { lamp.tab = b.dataset.p; lampSave(lamp); lampUI(lamp); });
+
+  swatchRow(q('.colors'), LAMP_COLORS, c => lampColor(lamp, c));
+
+  const kel = q('.kelvin');
+  WHITES.forEach(([name, k]) => { const b = document.createElement('button'); b.textContent = name; b.style.flex = '1';
+    b.onclick = () => { kel.value = k; q('.kout').textContent = k + 'K'; lampWhite(lamp, k); }; q('.whites').appendChild(b); });
+  kel.oninput = () => q('.kout').textContent = kel.value + 'K';
+  kel.onchange = () => lampWhite(lamp, +kel.value);
+
+  swatchRow(q('.paint'), LAMP_COLORS, c => lamp.paint = c);
+  q('.paint .sw').classList.add('sel');
+  PATTERNS.forEach(p => {
+    const b = document.createElement('button'); b.className = 'pat';
+    b.innerHTML = `<div class="strip">${p.c.map(c => `<i style="background:${c}"></i>`).join('')}</div><span>${p.name}</span>`;
+    b.onclick = () => { stopAnim(lamp); lamp.on = true; for (let i = 0; i < lamp.sections; i++) lamp.segColors[i] = p.c[i % p.c.length]; lamp.color = p.c[0]; lampUI(lamp); lampSections(lamp, lamp.segColors.slice(0, lamp.sections), 'pattern ' + p.name); };
+    q('.lamp-pats').appendChild(b);
   });
-  { const l = document.createElement('label'); l.className = 'sw custom'; l.title = 'Pick any color';
-    const inp = document.createElement('input'); inp.type = 'color'; inp.value = '#ffb547'; inp.setAttribute('aria-label', 'Pick any color');
-    inp.onchange = () => lampColor(lamp, inp.value); l.appendChild(inp); sw.appendChild(l); }
-  const fmtSeg = el.querySelector('.fmt');
+
+  APP_SCENES.forEach(sc => {
+    const b = document.createElement('button'); b.className = 'pat appscene'; b.innerHTML = `<span>${sc.name}</span>`;
+    b.onclick = () => { lampAppScene(lamp, sc); b.classList.add('sel'); };
+    q('.appscenes').appendChild(b);
+  });
+  const sp = q('.sspeed'); sp.oninput = () => { lamp.sceneSpeed = +sp.value; sp.nextElementSibling.textContent = sp.value; };
+  LAMP_SCENES.forEach(([name, code]) => {
+    const b = document.createElement('button'); b.className = 'pat'; b.innerHTML = `<span>${name}</span>`;
+    b.onclick = () => lampScene(lamp, code, name); q('.lampscenes').appendChild(b);
+  });
+  for (let s = 0; s <= 120; s++) { const o = document.createElement('option'); o.value = s; o.textContent = 'Scene ' + s; q('.scenenum').appendChild(o); }
+  q('.scenego').onclick = () => lampScene(lamp, +q('.scenenum').value);
+
+  MUSIC_MODES.forEach(([name, m]) => {
+    const b = document.createElement('button'); b.className = 'pat'; b.innerHTML = `<span>${name}</span>`;
+    b.onclick = () => { lamp.musicMode = [name, m]; lampMusic(lamp, m, name); }; q('.music').appendChild(b);
+  });
+  const sens = q('.sens'); sens.value = lamp.sens;
+  sens.oninput = () => sens.nextElementSibling.textContent = sens.value;
+  sens.onchange = () => { lamp.sens = +sens.value; if (lamp.musicMode) lampMusic(lamp, lamp.musicMode[1], lamp.musicMode[0]); };
+
+  const fmtSeg = q('.fmt');
   Object.entries(GV_FORMATS).forEach(([k, f]) => {
     const b = document.createElement('button'); b.textContent = f.label; b.dataset.v = k;
-    b.onclick = () => { lamp.fmt = k; lampSave(lamp); markSeg(); if (lamp.color) lampColor(lamp, lamp.color); };
+    b.onclick = () => { lamp.fmt = k; lampSave(lamp); markSeg(); lampUI(lamp); if (lamp.color) lampColor(lamp, lamp.color); };
     fmtSeg.appendChild(b);
   });
   el.querySelectorAll('.scale button').forEach(b => b.onclick = () => { lamp.scale = +b.dataset.v; lampSave(lamp); markSeg(); lampBright(lamp, +rng.value); });
+  el.querySelectorAll('.mfmt button').forEach(b => b.onclick = () => { lamp.musicFmt = b.dataset.v; lampSave(lamp); markSeg(); if (lamp.musicMode) lampMusic(lamp, lamp.musicMode[1], lamp.musicMode[0]); });
+  const ns = q('.nsec'); ns.oninput = () => { lamp.sections = +ns.value; ns.nextElementSibling.textContent = ns.value; lampSave(lamp); lampUI(lamp); };
   function markSeg() {
     fmtSeg.querySelectorAll('button').forEach(b => b.classList.toggle('sel', b.dataset.v === lamp.fmt));
     el.querySelectorAll('.scale button').forEach(b => b.classList.toggle('sel', +b.dataset.v === lamp.scale));
+    el.querySelectorAll('.mfmt button').forEach(b => b.classList.toggle('sel', b.dataset.v === lamp.musicFmt));
   }
   markSeg();
   $('lampList').appendChild(el);
