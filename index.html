@@ -95,6 +95,15 @@ details summary{cursor:pointer;color:var(--muted);font-size:.85rem}
 .toast{position:fixed;left:50%;bottom:calc(18px + env(safe-area-inset-bottom,0px));transform:translateX(-50%);background:var(--eave);border:1px solid var(--line);padding:10px 16px;border-radius:12px;font-size:.9rem;opacity:0;transition:opacity .2s;pointer-events:none;max-width:calc(100% - 32px)}
 .toast.show{opacity:1}
 .locked{opacity:.5;pointer-events:none}
+.tabs{display:flex;background:var(--dusk);border:1px solid var(--line);border-radius:14px;padding:4px;gap:4px}
+.tabs button{flex:1;border:0;background:transparent;padding:11px 6px;border-radius:10px}
+.tabs button.sel{background:var(--glow);color:var(--glow-ink)}
+.lamp-head{display:flex;align-items:center;justify-content:space-between;gap:10px}
+.lamp-head h3{font:800 1.1rem/1.1 var(--f-display);margin:0}
+.lamp-head small{display:block;font:400 .78rem var(--f-mono);color:var(--muted);margin-top:3px}
+.lamp-glow{width:44px;height:44px;border-radius:50%;background:#2a2f40;transition:background .3s,box-shadow .3s;flex:none}
+.lamp .power{padding:12px;font-size:1rem}
+.lamp .swatches{grid-template-columns:repeat(6,1fr)}
 @media (prefers-reduced-motion:reduce){*{transition:none!important}}
 </style>
 </head>
@@ -105,6 +114,12 @@ details summary{cursor:pointer;color:var(--muted);font-size:.85rem}
     <div class="status" id="status"><span class="dot"></span><span id="statusText">Not connected</span></div>
   </header>
 
+  <nav class="tabs" role="tablist">
+    <button id="tabBtnRoof" class="sel" role="tab">Roofline</button>
+    <button id="tabBtnLamps" role="tab">Lamps</button>
+  </nav>
+
+  <div id="tabRoof" style="display:flex;flex-direction:column;gap:14px">
   <section class="roof off" id="roof" aria-label="Preview of the light strip">
     <svg viewBox="0 0 300 40" aria-hidden="true"><path d="M0 38 L150 4 L300 38" fill="none" stroke="#2f3a5c" stroke-width="3" stroke-linejoin="round"/></svg>
     <div class="bulbs" id="bulbs"></div>
@@ -157,6 +172,20 @@ details summary{cursor:pointer;color:var(--muted);font-size:.85rem}
       <details>
         <summary>Bluetooth log (for troubleshooting)</summary>
         <div class="log" id="log"></div>
+      </details>
+    </section>
+  </div>
+  </div>
+
+  <div id="tabLamps" hidden style="flex-direction:column;gap:14px">
+    <p class="hint">Close the Govee app first (swipe it away). A lamp can only talk to one app at a time. Stay within about 30 ft.</p>
+    <div id="lampList" style="display:flex;flex-direction:column;gap:14px"></div>
+    <section class="card">
+      <h2>Lamp troubleshooting</h2>
+      <p class="hint">If a lamp connects but colors don't change, open its <em>Fix-it</em> settings and try format B, then C. If max brightness looks dim, switch the brightness range.</p>
+      <details>
+        <summary>Lamp Bluetooth log</summary>
+        <div class="log" id="lampLog"></div>
       </details>
     </section>
   </div>
@@ -422,11 +451,215 @@ $('btnEffect').onclick = sendEffect;
 
 $('segCount').oninput = e => { state.segments = +e.target.value; $('segOut').textContent = e.target.value; renderBulbs(); };
 
+
+/* ===== Govee lamps =====
+   Standard Govee Bluetooth protocol (as used by homebridge-govee and Home Assistant integrations).
+   Service 00010203-0405-0607-0809-0a0b0c0d1910, write ...2b11, notify ...2b10.
+   Every packet is 20 bytes: 0x33 | cmd | data… (zero padded) | XOR of the first 19 bytes.
+   Power 33 01 01/00 · Brightness 33 04 level · Color 33 05 <format> R G B
+   Keep-alive AA 01 every 2 s so the lamp doesn't drop the connection. */
+const GV_SVC = '00010203-0405-0607-0809-0a0b0c0d1910';
+const GV_WRITE = '00010203-0405-0607-0809-0a0b0c0d2b11';
+const GV_NOTIFY = '00010203-0405-0607-0809-0a0b0c0d2b10';
+const GV_FORMATS = {
+  A: {label: 'A · standard', pre: [0x02], post: []},
+  B: {label: 'B · alternate', pre: [0x0d], post: []},
+  C: {label: 'C · RGBIC', pre: [0x15, 0x01], post: [0, 0, 0, 0, 0, 0xff, 0x7f]},
+};
+const LAMPS = [
+  {id: 'table', name: 'Table lamp', model: 'H6022', fmt: 'A', scale: 255},
+  {id: 'floor', name: 'Floor lamp', model: 'H6076', fmt: 'C', scale: 255},
+];
+const LAMP_COLORS = ['#ff0000','#ff6a00','#ffb547','#ffd400','#00d34d','#00c8ff','#0047ff','#7a2cff','#ff2fa8','#ffffff','#ffd9a0'];
+
+function gvPacket(bytes) {
+  const p = new Uint8Array(20); p.set(bytes.slice(0, 19));
+  let x = 0; for (let i = 0; i < 19; i++) x ^= p[i];
+  p[19] = x; return p;
+}
+function lampLog(lamp, dir, bytes, note = '') {
+  const el = $('lampLog'), line = document.createElement('div');
+  line.innerHTML = `${lamp.model} ` + (dir === '>' ? '<b>→</b> ' : dir === '<' ? '<em>←</em> ' : '! ') + hex(bytes) + (note ? '  ' + note : '');
+  el.prepend(line); while (el.children.length > 80) el.lastChild.remove();
+}
+function lampSave(lamp) {
+  try { localStorage.setItem('lc.lamp.' + lamp.id, JSON.stringify({fmt: lamp.fmt, scale: lamp.scale, dev: lamp.devId})); } catch {}
+}
+function lampLoad(lamp) {
+  try { Object.assign(lamp, (({fmt, scale, dev}) => ({fmt: fmt || lamp.fmt, scale: scale || lamp.scale, devId: dev}))(JSON.parse(localStorage.getItem('lc.lamp.' + lamp.id)) || {})); } catch {}
+}
+function lampSend(lamp, bytes, note) {
+  if (!lamp.chr) return Promise.resolve();
+  const pkt = gvPacket(bytes);
+  lamp.q = (lamp.q || Promise.resolve()).then(async () => {
+    if (note) lampLog(lamp, '>', pkt, note);
+    try {
+      if (lamp.chr.properties.writeWithoutResponse) await lamp.chr.writeValueWithoutResponse(pkt);
+      else await lamp.chr.writeValueWithResponse(pkt);
+    } catch (e) { lampLog(lamp, '!', [], 'write failed: ' + e.message); }
+  });
+  return lamp.q;
+}
+function lampPower(lamp, on) {
+  lamp.on = on; lampUI(lamp);
+  return lampSend(lamp, [0x33, 0x01, on ? 1 : 0], on ? 'power on' : 'power off');
+}
+function lampBright(lamp, pct) {
+  lamp.bright = pct; lampUI(lamp);
+  const v = Math.max(1, Math.round(pct / 100 * lamp.scale));
+  return lampSend(lamp, [0x33, 0x04, v], 'brightness ' + pct + '%');
+}
+function lampColor(lamp, hexc) {
+  lamp.color = hexc; lamp.on = true; lampUI(lamp);
+  const n = rgbInt(hexc), f = GV_FORMATS[lamp.fmt];
+  lampSend(lamp, [0x33, 0x01, 1]);
+  return lampSend(lamp, [0x33, 0x05, ...f.pre, (n >> 16) & 255, (n >> 8) & 255, n & 255, ...f.post], `color ${hexc} (format ${lamp.fmt})`);
+}
+
+async function lampConnect(lamp, picked) {
+  try {
+    lampStatus(lamp, 'busy', 'Searching…');
+    lamp.dev = picked || await navigator.bluetooth.requestDevice({
+      filters: [{namePrefix: 'Govee_' + lamp.model}, {namePrefix: 'ihoment_' + lamp.model}, {namePrefix: 'GBK_' + lamp.model},
+                {namePrefix: 'Govee'}, {namePrefix: 'ihoment'}, {services: [GV_SVC]}],
+      optionalServices: [GV_SVC],
+    });
+    lamp.dev.ongattserverdisconnected = () => lampDropped(lamp);
+    lampStatus(lamp, 'busy', 'Connecting…');
+    const server = await lamp.dev.gatt.connect();
+    let svc;
+    try { svc = await server.getPrimaryService(GV_SVC); }
+    catch { lamp.dev.gatt.disconnect(); throw new Error('That isn\'t a Govee lamp. Pick the one with ' + lamp.model + ' in its name.'); }
+    lamp.chr = await svc.getCharacteristic(GV_WRITE);
+    try {
+      const nt = await svc.getCharacteristic(GV_NOTIFY);
+      await nt.startNotifications();
+      nt.addEventListener('characteristicvaluechanged', e => {
+        const d = new Uint8Array(e.target.value.buffer);
+        if (d[0] === 0xaa && d[1] === 0x01) { lamp.on = !!d[2]; lampUI(lamp); }
+        else lampLog(lamp, '<', d);
+      });
+    } catch {}
+    lamp.devId = lamp.dev.id; lampSave(lamp);
+    lampStatus(lamp, 'on', lamp.dev.name || 'Connected');
+    lampLog(lamp, '>', [], 'connected to ' + (lamp.dev.name || '?'));
+    clearInterval(lamp.ka);
+    lamp.ka = setInterval(() => lampSend(lamp, [0xaa, 0x01]), 2000);
+    lampSend(lamp, [0xaa, 0x01], 'read power');
+    lampUI(lamp);
+  } catch (e) {
+    lampStatus(lamp, '', 'Not connected');
+    if (e.name !== 'NotFoundError') toast(friendlyError(e));
+  }
+}
+function lampDropped(lamp) {
+  clearInterval(lamp.ka); lamp.chr = null;
+  lampStatus(lamp, '', 'Disconnected'); lampUI(lamp);
+}
+function lampStatus(lamp, cls, text) {
+  const el = lamp.el.querySelector('.status'); el.className = 'status ' + cls;
+  el.querySelector('span:last-child').textContent = text;
+}
+function lampUI(lamp) {
+  const el = lamp.el, connected = !!lamp.chr;
+  el.querySelector('.lamp-ctl').classList.toggle('locked', !connected);
+  el.querySelector('.lamp-connect').hidden = connected;
+  el.querySelector('.lamp-disconnect').hidden = !connected;
+  const pw = el.querySelector('.power');
+  pw.classList.toggle('is-on', !!lamp.on); pw.setAttribute('aria-pressed', !!lamp.on);
+  pw.querySelector('span').textContent = lamp.on ? 'Turn off' : 'Turn on';
+  const g = el.querySelector('.lamp-glow'), c = lamp.color || '#ffd9a0';
+  g.style.background = lamp.on ? c : '#2a2f40';
+  g.style.boxShadow = lamp.on ? `0 0 ${8 + (lamp.bright || 80) / 4}px ${c}` : 'none';
+  g.style.opacity = lamp.on ? 0.4 + 0.6 * ((lamp.bright || 80) / 100) : 1;
+}
+function buildLamp(lamp) {
+  lampLoad(lamp);
+  const el = document.createElement('section'); el.className = 'card lamp'; lamp.el = el;
+  el.innerHTML = `
+    <div class="lamp-head">
+      <div><h3>${lamp.name}</h3><small>Govee ${lamp.model}</small></div>
+      <div class="lamp-glow" aria-hidden="true"></div>
+    </div>
+    <div class="status"><span class="dot"></span><span>Not connected</span></div>
+    <div class="row">
+      <button class="primary connect lamp-connect">Connect ${lamp.name.toLowerCase()}</button>
+      <button class="lamp-disconnect" hidden>Disconnect</button>
+    </div>
+    <div class="lamp-ctl locked" style="display:flex;flex-direction:column;gap:12px">
+      <button class="power" aria-pressed="false">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M12 3v8"/><path d="M6.3 7.2a8 8 0 1 0 11.4 0"/></svg>
+        <span>Turn on</span>
+      </button>
+      <div class="slider"><input type="range" min="1" max="100" value="80" aria-label="${lamp.name} brightness"><output>80%</output></div>
+      <div class="swatches"></div>
+      <details>
+        <summary>Fix-it settings</summary>
+        <div style="display:flex;flex-direction:column;gap:10px;margin-top:10px">
+          <label class="hint">Color format</label>
+          <div class="seg fmt"></div>
+          <label class="hint">Brightness range</label>
+          <div class="seg scale"><button data-v="100">0–100</button><button data-v="255">0–255</button></div>
+        </div>
+      </details>
+    </div>`;
+  el.querySelector('.lamp-connect').onclick = () => lampConnect(lamp);
+  el.querySelector('.lamp-disconnect').onclick = () => lamp.dev?.gatt.disconnect();
+  el.querySelector('.power').onclick = () => lampPower(lamp, !lamp.on);
+  const rng = el.querySelector('input[type=range]'), out = el.querySelector('output');
+  let t; rng.oninput = () => { out.textContent = rng.value + '%'; clearTimeout(t); t = setTimeout(() => lampBright(lamp, +rng.value), 120); };
+  const sw = el.querySelector('.swatches');
+  LAMP_COLORS.forEach(c => {
+    const b = document.createElement('button'); b.className = 'sw'; b.style.background = c; b.setAttribute('aria-label', 'Color ' + c);
+    b.onclick = () => { sw.querySelectorAll('.sw').forEach(x => x.classList.remove('sel')); b.classList.add('sel'); lampColor(lamp, c); };
+    sw.appendChild(b);
+  });
+  { const l = document.createElement('label'); l.className = 'sw custom'; l.title = 'Pick any color';
+    const inp = document.createElement('input'); inp.type = 'color'; inp.value = '#ffb547'; inp.setAttribute('aria-label', 'Pick any color');
+    inp.onchange = () => lampColor(lamp, inp.value); l.appendChild(inp); sw.appendChild(l); }
+  const fmtSeg = el.querySelector('.fmt');
+  Object.entries(GV_FORMATS).forEach(([k, f]) => {
+    const b = document.createElement('button'); b.textContent = f.label; b.dataset.v = k;
+    b.onclick = () => { lamp.fmt = k; lampSave(lamp); markSeg(); if (lamp.color) lampColor(lamp, lamp.color); };
+    fmtSeg.appendChild(b);
+  });
+  el.querySelectorAll('.scale button').forEach(b => b.onclick = () => { lamp.scale = +b.dataset.v; lampSave(lamp); markSeg(); lampBright(lamp, +rng.value); });
+  function markSeg() {
+    fmtSeg.querySelectorAll('button').forEach(b => b.classList.toggle('sel', b.dataset.v === lamp.fmt));
+    el.querySelectorAll('.scale button').forEach(b => b.classList.toggle('sel', +b.dataset.v === lamp.scale));
+  }
+  markSeg();
+  $('lampList').appendChild(el);
+  lampUI(lamp);
+}
+LAMPS.forEach(buildLamp);
+async function lampAutoReconnect() {
+  if (!navigator.bluetooth?.getDevices) return;
+  const list = await navigator.bluetooth.getDevices();
+  for (const lamp of LAMPS) {
+    const d = lamp.devId && list.find(x => x.id === lamp.devId);
+    if (d) lampConnect(lamp, d).catch(() => {});
+  }
+}
+
+/* ===== Tabs ===== */
+function showTab(which) {
+  $('tabRoof').style.display = which === 'roof' ? 'flex' : 'none';
+  $('tabLamps').hidden = which !== 'lamps'; $('tabLamps').style.display = which === 'lamps' ? 'flex' : 'none';
+  $('status').style.visibility = which === 'roof' ? 'visible' : 'hidden';
+  $('tabBtnRoof').classList.toggle('sel', which === 'roof');
+  $('tabBtnLamps').classList.toggle('sel', which === 'lamps');
+  try { localStorage.setItem('lc.tab', which); } catch {}
+}
+$('tabBtnRoof').onclick = () => showTab('roof');
+$('tabBtnLamps').onclick = () => { showTab('lamps'); if (navigator.bluetooth) lampAutoReconnect().catch(() => {}); };
+try { if (localStorage.getItem('lc.tab') === 'lamps') showTab('lamps'); } catch {}
+
 // boot
 markEffect(); renderBulbs();
 if (!navigator.bluetooth) { $('noBt').hidden = false; $('btnConnect').disabled = true; }
 else tryAutoReconnect().catch(() => {});
-if (typeof module !== 'undefined') module.exports = {frame, attr, rgb4, parseAttrs, T, A};
+if (typeof module !== 'undefined') module.exports = {frame, attr, rgb4, parseAttrs, T, A, gvPacket};
 </script>
 </body>
 </html>
