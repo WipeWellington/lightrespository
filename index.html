@@ -533,7 +533,7 @@ function lampSave(lamp) {
 function lampLoad(lamp) {
   let s = {}; try { s = JSON.parse(localStorage.getItem('lc.lamp.' + lamp.id)) || {}; } catch {}
   lamp.fmt = s.fmt || lamp.fmt; lamp.scale = s.scale || lamp.scale; lamp.devId = s.dev;
-  lamp.sections = (s.sections && !(lamp.id === 'floor' && s.sections === 7)) ? s.sections : lamp.sections; // 7 was an old guess lamp.musicFmt = s.music || (lamp.fmt === 'C' ? 'new' : 'old');
+  lamp.sections = (s.sections && !(lamp.id === 'floor' && s.sections === 7)) ? s.sections : lamp.sections; lamp.musicFmt = s.music || (lamp.fmt === 'C' ? 'new' : 'old');
   lamp.tab = s.tab || 'color'; lamp.paint = '#ff0000'; lamp.segColors = Array(15).fill(null);
   lamp.sceneSpeed = 50; lamp.sens = 80;
 }
