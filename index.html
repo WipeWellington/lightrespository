@@ -178,7 +178,7 @@ details summary{cursor:pointer;color:var(--muted);font-size:.85rem}
   </div>
 
   <div id="tabLamps" hidden style="flex-direction:column;gap:14px">
-    <p class="hint">Close the Govee app first (swipe it away). A lamp can only talk to one app at a time. Stay within about 30 ft.</p>
+    <p class="hint">Close the Govee app first (swipe it away). A lamp can only talk to one app at a time. Stay within about 30 ft. When the list pops up, pick the one with the lamp's model in its name (H6022 or H6076). It may start with Govee_ or ihoment_.</p>
     <div id="lampList" style="display:flex;flex-direction:column;gap:14px"></div>
     <section class="card">
       <h2>Lamp troubleshooting</h2>
@@ -519,11 +519,8 @@ function lampColor(lamp, hexc) {
 async function lampConnect(lamp, picked) {
   try {
     lampStatus(lamp, 'busy', 'Searching…');
-    lamp.dev = picked || await navigator.bluetooth.requestDevice({
-      filters: [{namePrefix: 'Govee_' + lamp.model}, {namePrefix: 'ihoment_' + lamp.model}, {namePrefix: 'GBK_' + lamp.model},
-                {namePrefix: 'Govee'}, {namePrefix: 'ihoment'}, {services: [GV_SVC]}],
-      optionalServices: [GV_SVC],
-    });
+    lamp.dev = picked || await navigator.bluetooth.requestDevice({acceptAllDevices: true, optionalServices: [GV_SVC]});
+    lampLog(lamp, '>', [], 'picked ' + (lamp.dev.name || '(no name)'));
     lamp.dev.ongattserverdisconnected = () => lampDropped(lamp);
     lampStatus(lamp, 'busy', 'Connecting…');
     const server = await lamp.dev.gatt.connect();
@@ -549,6 +546,7 @@ async function lampConnect(lamp, picked) {
     lampUI(lamp);
   } catch (e) {
     lampStatus(lamp, '', 'Not connected');
+    lampLog(lamp, '!', [], (e.name || 'Error') + ': ' + e.message);
     if (e.name !== 'NotFoundError') toast(friendlyError(e));
   }
 }
