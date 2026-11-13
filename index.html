@@ -528,13 +528,13 @@ function lampLog(lamp, dir, bytes, note = '') {
   el.prepend(line); while (el.children.length > 80) el.lastChild.remove();
 }
 function lampSave(lamp) {
-  try { localStorage.setItem('lc.lamp.' + lamp.id, JSON.stringify({fmt: lamp.fmt, scale: lamp.scale, dev: lamp.devId, sections: lamp.sections, music: lamp.musicFmt, tab: lamp.tab})); } catch {}
+  try { localStorage.setItem('lc.lamp.' + lamp.id, JSON.stringify({fmt: lamp.fmt, scale: lamp.scale, dev: lamp.devId, sections: lamp.sections, music: lamp.musicFmt, tab: lamp.tab, write: lamp.writeMode})); } catch {}
 }
 function lampLoad(lamp) {
   let s = {}; try { s = JSON.parse(localStorage.getItem('lc.lamp.' + lamp.id)) || {}; } catch {}
   lamp.fmt = s.fmt || lamp.fmt; lamp.scale = s.scale || lamp.scale; lamp.devId = s.dev;
   lamp.sections = (s.sections && !(lamp.id === 'floor' && s.sections === 7)) ? s.sections : lamp.sections; lamp.musicFmt = s.music || (lamp.fmt === 'C' ? 'new' : 'old');
-  lamp.tab = s.tab || 'color'; lamp.paint = '#ff0000'; lamp.segColors = Array(15).fill(null);
+  lamp.tab = s.tab || 'color'; lamp.writeMode = s.write || 'fast'; lamp.paint = '#ff0000'; lamp.segColors = Array(15).fill(null);
   lamp.sceneSpeed = 50; lamp.sens = 80;
 }
 function lampSend(lamp, bytes, note) {
@@ -543,8 +543,9 @@ function lampSend(lamp, bytes, note) {
   lamp.q = (lamp.q || Promise.resolve()).then(async () => {
     if (note) lampLog(lamp, '>', pkt, note);
     try {
-      if (lamp.chr.properties.writeWithoutResponse) await lamp.chr.writeValueWithoutResponse(pkt);
-      else await lamp.chr.writeValueWithResponse(pkt);
+      const safe = lamp.writeMode === 'safe' || !lamp.chr.properties.writeWithoutResponse;
+      if (safe && lamp.chr.properties.write) await lamp.chr.writeValueWithResponse(pkt);
+      else await lamp.chr.writeValueWithoutResponse(pkt);
     } catch (e) { lampLog(lamp, '!', [], 'write failed: ' + e.message); }
   });
   return lamp.q;
@@ -635,6 +636,7 @@ async function lampConnect(lamp, picked) {
     try { svc = await server.getPrimaryService(GV_SVC); }
     catch { lamp.dev.gatt.disconnect(); throw new Error('That isn\'t a Govee lamp. Pick the one with ' + lamp.model + ' in its name.'); }
     lamp.chr = await svc.getCharacteristic(GV_WRITE);
+    { const p = lamp.chr.properties; lampLog(lamp, '>', [], `write char: write=${p.write} noResp=${p.writeWithoutResponse} notify=${p.notify}`); }
     try {
       const nt = await svc.getCharacteristic(GV_NOTIFY);
       await nt.startNotifications();
@@ -766,6 +768,8 @@ function buildLamp(lamp) {
           <div class="slider"><input type="range" class="nsec" min="1" max="15" value="${lamp.sections}" aria-label="Sections"><output>${lamp.sections}</output></div>
           <label class="hint">Music mode format (if Music does nothing, switch this)</label>
           <div class="seg mfmt"><button data-v="old">1 · older</button><button data-v="new">2 · newer</button></div>
+          <label class="hint">Sending mode (if the lamp connects but ignores every button, try Careful)</label>
+          <div class="seg wmode"><button data-v="fast">Fast</button><button data-v="safe">Careful</button></div>
         </div>
       </details>
     </div>`;
@@ -823,11 +827,13 @@ function buildLamp(lamp) {
   });
   el.querySelectorAll('.scale button').forEach(b => b.onclick = () => { lamp.scale = +b.dataset.v; lampSave(lamp); markSeg(); lampBright(lamp, +rng.value); });
   el.querySelectorAll('.mfmt button').forEach(b => b.onclick = () => { lamp.musicFmt = b.dataset.v; lampSave(lamp); markSeg(); if (lamp.musicMode) lampMusic(lamp, lamp.musicMode[1], lamp.musicMode[0]); });
+  el.querySelectorAll('.wmode button').forEach(b => b.onclick = () => { lamp.writeMode = b.dataset.v; lampSave(lamp); markSeg(); lampLog(lamp, '>', [], 'sending mode ' + b.dataset.v); });
   const ns = q('.nsec'); ns.oninput = () => { lamp.sections = +ns.value; ns.nextElementSibling.textContent = ns.value; lampSave(lamp); lampUI(lamp); };
   function markSeg() {
     fmtSeg.querySelectorAll('button').forEach(b => b.classList.toggle('sel', b.dataset.v === lamp.fmt));
     el.querySelectorAll('.scale button').forEach(b => b.classList.toggle('sel', +b.dataset.v === lamp.scale));
     el.querySelectorAll('.mfmt button').forEach(b => b.classList.toggle('sel', b.dataset.v === lamp.musicFmt));
+    el.querySelectorAll('.wmode button').forEach(b => b.classList.toggle('sel', b.dataset.v === lamp.writeMode));
   }
   markSeg();
   $('lampList').appendChild(el);
