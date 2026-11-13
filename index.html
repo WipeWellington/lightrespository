@@ -186,6 +186,7 @@ details summary{cursor:pointer;color:var(--muted);font-size:.85rem}
   <div id="tabLamps" hidden style="flex-direction:column;gap:14px">
     <p class="note warn" id="noBtLamps" hidden>This browser can't use Bluetooth, so the lamps can't connect. Open this page in <strong>Chrome on your Android phone</strong> (or Chrome/Edge on a computer). Bluetooth web pages don't work on iPhone.</p>
     <p class="hint">Close the Govee app first (swipe it away). A lamp can only talk to one app at a time. Stay within about 30 ft. When the list pops up, pick the one with the lamp's model in its name (H6022 or H6076). It may start with Govee_ or ihoment_.</p>
+    <p class="note" id="autoHint" hidden>Want the lamps to reconnect by themselves? In Chrome, go to <strong>chrome://flags</strong>, search for <strong>Web Bluetooth new permissions backend</strong>, set it to <strong>Enabled</strong> and tap Relaunch. You only do this once.</p>
     <div id="lampList" style="display:flex;flex-direction:column;gap:14px"></div>
     <section class="card">
       <h2>Lamp troubleshooting</h2>
@@ -852,7 +853,7 @@ async function lampAutoReconnect() {
   if (!navigator.bluetooth?.getDevices) return;
   const list = await navigator.bluetooth.getDevices();
   for (const lamp of LAMPS) {
-    const d = lamp.devId && list.find(x => x.id === lamp.devId);
+    const d = lamp.devId && !lamp.chr && list.find(x => x.id === lamp.devId);
     if (d) lampConnect(lamp, d).catch(() => {});
   }
 }
@@ -873,7 +874,7 @@ try { if (localStorage.getItem('lc.tab') === 'lamps') showTab('lamps'); } catch 
 // boot
 markEffect(); renderBulbs();
 if (!navigator.bluetooth) { $('noBt').hidden = false; $('noBtLamps').hidden = false; document.querySelectorAll('.lamp-connect').forEach(b => b.disabled = true); $('btnConnect').disabled = true; }
-else tryAutoReconnect().catch(() => {});
+else { tryAutoReconnect().catch(() => {}); lampAutoReconnect().catch(() => {}); if (!navigator.bluetooth.getDevices) $('autoHint').hidden = false; }
 if (typeof module !== 'undefined') module.exports = {frame, attr, rgb4, parseAttrs, T, A, gvPacket};
 </script>
 </body>
