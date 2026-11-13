@@ -640,7 +640,7 @@ async function lampConnect(lamp, picked) {
       await nt.startNotifications();
       nt.addEventListener('characteristicvaluechanged', e => {
         const d = new Uint8Array(e.target.value.buffer);
-        if (d[0] === 0xaa && d[1] === 0x01) { lamp.on = !!d[2]; lampUI(lamp); }
+        if (d[0] === 0xaa && d[1] === 0x01) { if (!lamp.heard) lampLog(lamp, '<', d, 'lamp answered'); lamp.heard = true; lamp.on = !!d[2]; lampUI(lamp); }
         else lampLog(lamp, '<', d);
       });
     } catch {}
