@@ -494,6 +494,14 @@ const hexRgb = h => { const n = rgbInt(h); return [(n >> 16) & 255, (n >> 8) & 2
 const noise = (t, i) => (Math.sin(t * 7.3 + i * 1.7) + Math.sin(t * 13.1 + i * 3.1) + Math.sin(t * 2.9 + i * 5.3)) / 3;
 const APP_SCENES = [
   {name: 'Candle', fps: 8, f: (t, i) => { const k = 0.6 + 0.4 * Math.abs(noise(t * 1.5, i)); return [255, 120, 20].map(x => Math.round(x * k)); }},
+  {name: 'Bonfire', fps: 8, f: (t, i, n) => {
+    // hot yellow at the base fading to red embers at the top, with flickers rising upward and the odd flare
+    const pos = n > 1 ? i / (n - 1) : 0.3;
+    const rise = noise(t * 1.8 - pos * 2.5, 0) * 0.35 + noise(t * 3.1 - pos * 4, i) * 0.2;
+    const flare = Math.max(0, Math.sin(t * 0.9) * Math.sin(t * 2.3 + 1)) * 0.4;
+    const heat = Math.max(0, Math.min(1, 0.85 - pos * 0.75 + rise + flare));
+    return heat < 0.5 ? mix([90, 4, 0], [255, 60, 0], heat * 2) : mix([255, 60, 0], [255, 190, 40], (heat - 0.5) * 2);
+  }},
   {name: 'Fireplace', fps: 8, f: (t, i) => mix([255, 30, 0], [255, 150, 10], 0.5 + 0.5 * noise(t * 1.2, i))},
   {name: 'Breathe', fps: 8, f: (t, i, n, lamp) => { const k = 0.15 + 0.85 * (0.5 - 0.5 * Math.cos(t * 1.4)); return hexRgb(lamp.color || '#ffb547').map(x => Math.round(x * k)); }},
   {name: 'Rainbow', fps: 6, f: (t, i, n) => hsv(t / 12 + i / Math.max(n, 1), 1, 1)},
