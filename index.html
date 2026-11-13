@@ -184,6 +184,7 @@ details summary{cursor:pointer;color:var(--muted);font-size:.85rem}
   </div>
 
   <div id="tabLamps" hidden style="flex-direction:column;gap:14px">
+    <p class="note warn" id="noBtLamps" hidden>This browser can't use Bluetooth, so the lamps can't connect. Open this page in <strong>Chrome on your Android phone</strong> (or Chrome/Edge on a computer). Bluetooth web pages don't work on iPhone.</p>
     <p class="hint">Close the Govee app first (swipe it away). A lamp can only talk to one app at a time. Stay within about 30 ft. When the list pops up, pick the one with the lamp's model in its name (H6022 or H6076). It may start with Govee_ or ihoment_.</p>
     <div id="lampList" style="display:flex;flex-direction:column;gap:14px"></div>
     <section class="card">
@@ -473,7 +474,7 @@ const GV_FORMATS = {
   C: {label: 'C · RGBIC', pre: [0x15, 0x01], post: [0, 0, 0, 0, 0, 0xff, 0x7f]},
 };
 const LAMPS = [
-  {id: 'table', name: 'Table lamp', model: 'H6022', fmt: 'A', scale: 255, sections: 1},
+  {id: 'table', name: 'Table lamp', model: 'H6022', fmt: 'C', scale: 255, sections: 1},
   {id: 'floor', name: 'Floor lamp', model: 'H6076', fmt: 'C', scale: 255, sections: 7},
 ];
 const LAMP_COLORS = ['#ff0000','#ff6a00','#ffb547','#ffd400','#00d34d','#00c8ff','#0047ff','#7a2cff','#ff2fa8','#ffffff','#ffd9a0'];
@@ -857,7 +858,7 @@ try { if (localStorage.getItem('lc.tab') === 'lamps') showTab('lamps'); } catch 
 
 // boot
 markEffect(); renderBulbs();
-if (!navigator.bluetooth) { $('noBt').hidden = false; $('btnConnect').disabled = true; }
+if (!navigator.bluetooth) { $('noBt').hidden = false; $('noBtLamps').hidden = false; document.querySelectorAll('.lamp-connect').forEach(b => b.disabled = true); $('btnConnect').disabled = true; }
 else tryAutoReconnect().catch(() => {});
 if (typeof module !== 'undefined') module.exports = {frame, attr, rgb4, parseAttrs, T, A, gvPacket};
 </script>
