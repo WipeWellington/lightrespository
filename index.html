@@ -475,7 +475,7 @@ const GV_FORMATS = {
 };
 const LAMPS = [
   {id: 'table', name: 'Table lamp', model: 'H6022', fmt: 'C', scale: 255, sections: 1},
-  {id: 'floor', name: 'Floor lamp', model: 'H6076', fmt: 'C', scale: 255, sections: 7},
+  {id: 'floor', name: 'Floor lamp', model: 'H6076', fmt: 'C', scale: 255, sections: 14},
 ];
 const LAMP_COLORS = ['#ff0000','#ff6a00','#ffb547','#ffd400','#00d34d','#00c8ff','#0047ff','#7a2cff','#ff2fa8','#ffffff','#ffd9a0'];
 const WHITES = [['Candle', 2000], ['Warm', 2700], ['Soft', 3500], ['Daylight', 5000], ['Cool', 6500]];
@@ -533,7 +533,7 @@ function lampSave(lamp) {
 function lampLoad(lamp) {
   let s = {}; try { s = JSON.parse(localStorage.getItem('lc.lamp.' + lamp.id)) || {}; } catch {}
   lamp.fmt = s.fmt || lamp.fmt; lamp.scale = s.scale || lamp.scale; lamp.devId = s.dev;
-  lamp.sections = s.sections || lamp.sections; lamp.musicFmt = s.music || (lamp.fmt === 'C' ? 'new' : 'old');
+  lamp.sections = (s.sections && !(lamp.id === 'floor' && s.sections === 7)) ? s.sections : lamp.sections; // 7 was an old guess lamp.musicFmt = s.music || (lamp.fmt === 'C' ? 'new' : 'old');
   lamp.tab = s.tab || 'color'; lamp.paint = '#ff0000'; lamp.segColors = Array(15).fill(null);
   lamp.sceneSpeed = 50; lamp.sens = 80;
 }
