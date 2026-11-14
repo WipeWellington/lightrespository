@@ -120,6 +120,8 @@ details summary{cursor:pointer;color:var(--muted);font-size:.85rem}
     <div class="status" id="status"><span class="dot"></span><span id="statusText">Not connected</span></div>
   </header>
 
+  <p class="note" id="autoHint" hidden>Want the lights to connect by themselves? In Chrome, go to <strong>chrome://flags</strong>, search for <strong>Web Bluetooth new permissions backend</strong>, set it to <strong>Enabled</strong> and tap Relaunch. You only do this once.</p>
+
   <nav class="tabs" role="tablist">
     <button id="tabBtnRoof" class="sel" role="tab">Roofline</button>
     <button id="tabBtnLamps" role="tab">Lamps</button>
@@ -186,7 +188,6 @@ details summary{cursor:pointer;color:var(--muted);font-size:.85rem}
   <div id="tabLamps" hidden style="flex-direction:column;gap:14px">
     <p class="note warn" id="noBtLamps" hidden>This browser can't use Bluetooth, so the lamps can't connect. Open this page in <strong>Chrome on your Android phone</strong> (or Chrome/Edge on a computer). Bluetooth web pages don't work on iPhone.</p>
     <p class="hint">Close the Govee app first (swipe it away). A lamp can only talk to one app at a time. Stay within about 30 ft. When the list pops up, pick the one with the lamp's model in its name (H6022 or H6076). It may start with Govee_ or ihoment_.</p>
-    <p class="note" id="autoHint" hidden>Want the lamps to reconnect by themselves? In Chrome, go to <strong>chrome://flags</strong>, search for <strong>Web Bluetooth new permissions backend</strong>, set it to <strong>Enabled</strong> and tap Relaunch. You only do this once.</p>
     <div id="lampList" style="display:flex;flex-direction:column;gap:14px"></div>
     <section class="card">
       <h2>Lamp troubleshooting</h2>
@@ -308,8 +309,9 @@ function applyState(a) {
 async function connect() {
   try {
     setStatus('busy', 'Searching…');
+    AUTO.roofManual = false;
     device = await navigator.bluetooth.requestDevice({acceptAllDevices: true, optionalServices: [SVC]});
-    device.addEventListener('gattserverdisconnected', onDisconnected);
+    device.ongattserverdisconnected = onDisconnected;
     await openGatt();
   } catch (e) {
     setStatus('', 'Not connected');
@@ -336,21 +338,20 @@ function onDisconnected() {
   chr = null;
   $('controls').classList.add('locked');
   $('btnConnect').hidden = false; $('btnDisconnect').hidden = true;
-  setStatus('', 'Disconnected');
+  setStatus('', AUTO.roofManual ? 'Disconnected' : 'Reconnecting…');
+  if (!AUTO.roofManual) setTimeout(autoConnectAll, 1500);
 }
 function friendlyError(e) {
   if (/User cancelled|chooser/i.test(e.message)) return 'No device picked.';
   if (/Bluetooth adapter not available|globally disabled/i.test(e.message)) return 'Turn on Bluetooth and Location on your phone, then try again.';
   return e.message;
 }
-async function tryAutoReconnect() {
-  if (!navigator.bluetooth?.getDevices) return;
-  let id; try { id = localStorage.getItem('lc.dev'); } catch {}
-  if (!id) return;
-  const list = await navigator.bluetooth.getDevices();
-  const d = list.find(x => x.id === id); if (!d) return;
-  device = d; device.addEventListener('gattserverdisconnected', onDisconnected);
-  try { await openGatt(); } catch { setStatus('', 'Tap Connect'); }
+async function roofAuto(d) {
+  if (AUTO.roofBusy) return; AUTO.roofBusy = true;
+  device = d; device.ongattserverdisconnected = onDisconnected;
+  try { await connectKnown(d); await openGatt(); }
+  catch { setStatus('', 'Looking for lights…'); }
+  finally { AUTO.roofBusy = false; }
 }
 
 /* ===== UI state ===== */
@@ -396,7 +397,7 @@ function setPowerUI(on) {
 }
 
 $('btnConnect').onclick = connect;
-$('btnDisconnect').onclick = () => device?.gatt.disconnect();
+$('btnDisconnect').onclick = () => { AUTO.roofManual = true; device?.gatt.disconnect(); };
 $('btnPower').onclick = () => { const on = !state.power; setPowerUI(on); setAttrs([attr(A.POWER, T.BOOL, on ? 1 : 0)], on ? 'power on' : 'power off'); };
 
 let bTimer;
@@ -633,14 +634,15 @@ function lampAppScene(lamp, sc) {
   }, 1000 / sc.fps);
 }
 
-async function lampConnect(lamp, picked) {
+async function lampConnect(lamp, picked, quiet) {
+  if (lamp.busy) return; lamp.busy = true;
   try {
     lampStatus(lamp, 'busy', 'Searching…');
     lamp.dev = picked || await navigator.bluetooth.requestDevice({acceptAllDevices: true, optionalServices: [GV_SVC]});
     lampLog(lamp, '>', [], 'picked ' + (lamp.dev.name || '(no name)'));
     lamp.dev.ongattserverdisconnected = () => lampDropped(lamp);
     lampStatus(lamp, 'busy', 'Connecting…');
-    const server = await lamp.dev.gatt.connect();
+    const server = picked ? await connectKnown(lamp.dev) : await lamp.dev.gatt.connect();
     let svc;
     try { svc = await server.getPrimaryService(GV_SVC); }
     catch { lamp.dev.gatt.disconnect(); throw new Error('That isn\'t a Govee lamp. Pick the one with ' + lamp.model + ' in its name.'); }
@@ -663,14 +665,14 @@ async function lampConnect(lamp, picked) {
     lampSend(lamp, [0xaa, 0x01], 'read power');
     lampUI(lamp);
   } catch (e) {
-    lampStatus(lamp, '', 'Not connected');
-    lampLog(lamp, '!', [], (e.name || 'Error') + ': ' + e.message);
-    if (e.name !== 'NotFoundError') toast(friendlyError(e));
-  }
+    lampStatus(lamp, '', quiet ? 'Looking for lamp…' : 'Not connected');
+    if (!quiet) { lampLog(lamp, '!', [], (e.name || 'Error') + ': ' + e.message); if (e.name !== 'NotFoundError') toast(friendlyError(e)); }
+  } finally { lamp.busy = false; }
 }
 function lampDropped(lamp) {
   clearInterval(lamp.ka); stopAnim(lamp); lamp.chr = null;
-  lampStatus(lamp, '', 'Disconnected'); lampUI(lamp);
+  lampStatus(lamp, '', lamp.manual ? 'Disconnected' : 'Reconnecting…'); lampUI(lamp);
+  if (!lamp.manual) setTimeout(autoConnectAll, 1500);
 }
 function lampStatus(lamp, cls, text) {
   const el = lamp.el.querySelector('.status'); el.className = 'status ' + cls;
@@ -783,8 +785,8 @@ function buildLamp(lamp) {
       </details>
     </div>`;
   const q = s => el.querySelector(s);
-  q('.lamp-connect').onclick = () => lampConnect(lamp);
-  q('.lamp-disconnect').onclick = () => lamp.dev?.gatt.disconnect();
+  q('.lamp-connect').onclick = () => { lamp.manual = false; lampConnect(lamp); };
+  q('.lamp-disconnect').onclick = () => { lamp.manual = true; lamp.dev?.gatt.disconnect(); };
   q('.power').onclick = () => lampPower(lamp, !lamp.on);
   const rng = q('.bright'), out = rng.nextElementSibling;
   let t; rng.oninput = () => { out.textContent = rng.value + '%'; clearTimeout(t); t = setTimeout(() => lampBright(lamp, +rng.value), 120); };
@@ -849,13 +851,40 @@ function buildLamp(lamp) {
   lampUI(lamp);
 }
 LAMPS.forEach(buildLamp);
-async function lampAutoReconnect() {
-  if (!navigator.bluetooth?.getDevices) return;
-  const list = await navigator.bluetooth.getDevices();
-  for (const lamp of LAMPS) {
-    const d = lamp.devId && !lamp.chr && list.find(x => x.id === lamp.devId);
-    if (d) lampConnect(lamp, d).catch(() => {});
+
+/* ===== Auto-connect: keeps every remembered light connected while the app is open ===== */
+const AUTO = {roofManual: false, roofBusy: false, running: false};
+// Connect to a device Chrome already remembers. If it hasn't been seen lately,
+// listen for its radio signal for a few seconds first, then try again.
+async function connectKnown(d) {
+  const go = () => d.gatt.connect();
+  try { return await go(); }
+  catch (e) {
+    if (!d.watchAdvertisements) throw e;
+    const ac = new AbortController();
+    await new Promise(res => {
+      const t = setTimeout(res, 6000);
+      d.addEventListener('advertisementreceived', () => { clearTimeout(t); res(); }, {once: true});
+      d.watchAdvertisements({signal: ac.signal}).catch(() => { clearTimeout(t); res(); });
+    });
+    ac.abort();
+    return await go();
   }
+}
+async function autoConnectAll() {
+  if (AUTO.running || document.hidden || !navigator.bluetooth?.getDevices) return;
+  AUTO.running = true;
+  try {
+    const list = await navigator.bluetooth.getDevices(), jobs = [];
+    let id; try { id = localStorage.getItem('lc.dev'); } catch {}
+    const roof = id && list.find(x => x.id === id);
+    if (roof && !chr && !AUTO.roofManual) jobs.push(roofAuto(roof));
+    for (const lamp of LAMPS) {
+      const d = lamp.devId && !lamp.chr && !lamp.manual && list.find(x => x.id === lamp.devId);
+      if (d) jobs.push(lampConnect(lamp, d, true));
+    }
+    await Promise.allSettled(jobs);
+  } catch {} finally { AUTO.running = false; }
 }
 
 /* ===== Tabs ===== */
@@ -868,13 +897,18 @@ function showTab(which) {
   try { localStorage.setItem('lc.tab', which); } catch {}
 }
 $('tabBtnRoof').onclick = () => showTab('roof');
-$('tabBtnLamps').onclick = () => { showTab('lamps'); if (navigator.bluetooth) lampAutoReconnect().catch(() => {}); };
+$('tabBtnLamps').onclick = () => showTab('lamps');
 try { if (localStorage.getItem('lc.tab') === 'lamps') showTab('lamps'); } catch {}
 
 // boot
 markEffect(); renderBulbs();
 if (!navigator.bluetooth) { $('noBt').hidden = false; $('noBtLamps').hidden = false; document.querySelectorAll('.lamp-connect').forEach(b => b.disabled = true); $('btnConnect').disabled = true; }
-else { tryAutoReconnect().catch(() => {}); lampAutoReconnect().catch(() => {}); if (!navigator.bluetooth.getDevices) $('autoHint').hidden = false; }
+else if (!navigator.bluetooth.getDevices) $('autoHint').hidden = false;
+else {
+  autoConnectAll();
+  setInterval(autoConnectAll, 8000);                       // keep trying while the app is open
+  document.addEventListener('visibilitychange', () => { if (!document.hidden) autoConnectAll(); }); // and right when you come back to it
+}
 if (typeof module !== 'undefined') module.exports = {frame, attr, rgb4, parseAttrs, T, A, gvPacket};
 </script>
 </body>
