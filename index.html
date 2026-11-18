@@ -159,6 +159,12 @@ details summary{cursor:pointer;color:var(--muted);font-size:.85rem}
     </section>
 
     <section class="card">
+      <h2>Saved</h2>
+      <div class="patterns" id="favs"></div>
+      <button id="btnSave">Save what's on now</button>
+    </section>
+
+    <section class="card">
       <h2>Patterns <span class="hint" style="text-transform:none;letter-spacing:0">repeats along the roof</span></h2>
       <div class="patterns" id="patterns"></div>
     </section>
@@ -356,7 +362,7 @@ async function roofAuto(d) {
 }
 
 /* ===== UI state ===== */
-const state = {power: false, colors: ['#ffb547'], segments: 15, effect: 1, pattern: null};
+const state = {anim: false, power: false, colors: ['#ffb547'], segments: 15, effect: 1, pattern: null};
 const COLORS = ['#ff0000','#ff6a00','#ffb547','#ffd400','#00d34d','#00c8ff','#0047ff','#7a2cff','#ff2fa8','#ffffff','#ffd9a0'];
 const XMAS_COUNT = 35;
 const PATTERNS = [
@@ -451,16 +457,16 @@ $('bright').oninput = e => {
 };
 
 function sendSolid(hexc) {
-  state.colors = [hexc]; state.pattern = null; markPattern(); renderBulbs(); setPowerUI(true);
+  state.anim = false; state.colors = [hexc]; state.pattern = null; markPattern(); renderBulbs(); setPowerUI(true);
   setAttrs([attr(A.POWER, T.BOOL, 1), attr(A.MODE, T.BYTE, MODE.COLOR), attr(A.BRIGHT, T.BYTE, +$('bright').value), attr(A.COLOR, T.INT, rgbInt(hexc))], 'solid ' + hexc);
 }
 function sendPattern(cols) {
-  state.colors = cols; renderBulbs(); setPowerUI(true);
+  state.anim = false; state.colors = cols; renderBulbs(); setPowerUI(true);
   const seg = []; for (let i = 0; i < state.segments; i++) seg.push(...rgb4(cols[i % cols.length]));
   setAttrs([attr(A.POWER, T.BOOL, 1), attr(A.MODE, T.BYTE, MODE.COLOR), attr(A.SEGMENTS_COLOR, T.BYTE_ARRAY, seg)], 'pattern');
 }
 function sendEffect() {
-  const cols = state.colors.slice(0, 16), speed = +$('speed').value;
+  state.anim = true; const cols = state.colors.slice(0, 16), speed = +$('speed').value;
   const eff = [1, speed, state.effect, 0, cols.length, ...cols.flatMap(rgb4), 0, 255];
   setPowerUI(true);
   setAttrs([attr(A.POWER, T.BOOL, 1), attr(A.MODE, T.BYTE, MODE.SCENE), attr(A.EFFECT, T.BYTE_ARRAY, eff), attr(A.SCENE_ID, T.INT, 0)], 'effect style ' + state.effect);
@@ -502,6 +508,36 @@ $('effectMore').onchange = e => { state.effect = +e.target.value; markEffect(); 
 $('speed').oninput = e => $('speedOut').textContent = e.target.value;
 $('speed').onchange = () => { if (chr) sendEffect(); };
 $('btnEffect').onclick = sendEffect;
+
+// saved favorites (stored on this phone)
+const loadFavs = () => { try { return JSON.parse(localStorage.getItem('lc.favs')) || []; } catch { return []; } };
+const storeFavs = f => { try { localStorage.setItem('lc.favs', JSON.stringify(f)); } catch {} };
+function renderFavs() {
+  const box = $('favs'); box.innerHTML = ''; const favs = loadFavs();
+  if (!favs.length) { box.innerHTML = '<p class="hint" style="grid-column:1/-1;margin:0">Nothing saved yet. Set the lights how you like them, then tap Save.</p>'; return; }
+  favs.forEach((f, i) => {
+    const b = document.createElement('button'); b.className = 'pat'; b.style.position = 'relative';
+    b.innerHTML = `<div class="strip">${f.colors.map(c => `<i style="background:${c}"></i>`).join('')}</div><span>${f.name}${f.anim ? ' ✨' : ''}</span><span class="favdel" role="button" aria-label="Delete ${f.name}" style="position:absolute;top:2px;right:8px;font-size:1.1rem;opacity:.6">×</span>`;
+    b.onclick = e => {
+      if (e.target.classList.contains('favdel')) { if (confirm('Delete "' + f.name + '"?')) { const all = loadFavs(); all.splice(i, 1); storeFavs(all); renderFavs(); } return; }
+      $('bright').value = f.bright; $('brightOut').textContent = f.bright + '%';
+      state.pattern = null; markPattern();
+      if (f.anim) { state.colors = f.colors; state.effect = f.effect; $('speed').value = f.speed; $('speedOut').textContent = f.speed; markEffect(); renderBulbs(); sendEffect(); }
+      else if (f.colors.length === 1) sendSolid(f.colors[0]);
+      else sendPattern(f.colors);
+      setTimeout(() => setAttrs([attr(A.BRIGHT, T.BYTE, +f.bright)], 'brightness'), 300);
+    };
+    box.appendChild(b);
+  });
+}
+$('btnSave').onclick = () => {
+  const guess = state.pattern != null ? PATTERNS[state.pattern].name : 'My lights';
+  const name = prompt('Name this one:', guess); if (!name || !name.trim()) return;
+  const all = loadFavs();
+  all.push({name: name.trim(), colors: state.colors.slice(), bright: +$('bright').value, anim: state.anim, effect: state.effect, speed: +$('speed').value});
+  storeFavs(all); renderFavs(); toast('Saved "' + name.trim() + '"');
+};
+renderFavs();
 
 $('segCount').oninput = e => { state.segments = +e.target.value; $('segOut').textContent = e.target.value; renderBulbs(); };
 
